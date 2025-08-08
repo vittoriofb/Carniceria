@@ -76,67 +76,65 @@ def process_message(data):
     user_id = data.get("user_id") or data.get("from")
     message = data.get("message") or data.get("text")
     mensaje = message.lower().strip()
-    session = sessions.get(user_id, {"step": 0})
+    session = sessions.get(user_id)
 
-    if session["step"] == 0:
+    # Nueva sesión
+    if not session:
+        sessions[user_id] = {
+            "step": 0,
+            "pedido": [],
+            "detalle_pedido": [],
+            "impreso": False
+        }
+        return {"reply": "👋 ¡Bienvenido a la carnicería! Anotando un momento...\n¿Cuál es tu nombre?"}
+
+    step = session["step"]
+
+    if step == 0:
         session["nombre"] = message
-        session["step"] += 1
-        sessions[user_id] = session
+        session["step"] = 1
         return {"reply": f"Hola {session['nombre']} 👋 ¿A qué hora quieres recoger tu pedido?"}
 
-    elif session["step"] == 1:
+    elif step == 1:
         session["hora"] = message
-        session["step"] += 1
-        session["pedido"] = []
-        sessions[user_id] = session
+        session["step"] = 2
+        productos = "\n".join([f"- {p.capitalize()} ({v:.2f}€/kg)" for p, v in PRODUCTOS_DB.items()])
+        recetas = "\n".join([f"- {r}" for r in RECETAS_ESPECIALES])
+        return {
+            "reply": f"Estos son los productos disponibles:\n{productos}\n\nTambién puedes pedir recetas como:\n{recetas}\n\nEscribe tus productos uno a uno o todos juntos. Cuando termines, escribe 'listo'."
+        }
 
-        productos_list = "\n".join([f"- {p.capitalize()} ({v:.2f}€/kg)" for p, v in PRODUCTOS_DB.items()])
-        recetas_list = "\n".join([f"- {r}" for r in RECETAS_ESPECIALES])
-        return {"reply": f"Estos son los productos disponibles:\n{productos_list}\n\nTambién puedes pedir recetas como:\n{recetas_list}\n\nPuedes escribir tus productos uno a uno. Escribe *listo* cuando termines."}
+    elif step == 2:
+        if mensaje in RECETAS_ESPECIALES:
+            session["receta_nombre"] = mensaje
+            session["step"] = "receta_personas"
+            return {
+                "reply": f"🥘 {RECETAS_ESPECIALES[mensaje]['descripcion']}\n\n¿Cuántas personas van a comer?"
+            }
 
-    elif session["step"] == 2:
-        # Si se escribe "listo", pasar al resumen y confirmación
         if mensaje == "listo":
             if not session["pedido"]:
-                return {"reply": "❌ Aún no has añadido ningún producto. Por favor indica qué deseas pedir."}
+                return {"reply": "⚠️ No has pedido nada aún. Escribe productos o una receta antes de confirmar."}
             total, detalles = calcular_total(session["pedido"])
             session["total"] = total
             session["detalle_pedido"] = detalles
             session["step"] = 3
-            sessions[user_id] = session
-            detalle_texto = "\n".join(detalles)
             return {
-                "reply": f"🧾 Este es tu pedido:\n{detalle_texto}\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
+                "reply": f"🧾 Este es tu pedido:\n" + "\n".join(detalles) + f"\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
             }
 
-        # Si es una receta especial
-        if mensaje in RECETAS_ESPECIALES:
-            session["receta_nombre"] = mensaje
-            session["step"] = "receta_personas"
-            sessions[user_id] = session
-            return {"reply": f"🥘 {RECETAS_ESPECIALES[mensaje]['descripcion']}\n\n¿Cuántas personas van a comer?"}
-
-        # Si son productos sueltos
         items = parse_quantity(mensaje)
         if not items:
-            return {
-                "reply": "❌ No entendí tu pedido. Usa un formato como:\n'1kg de pollo' o prueba con 'arreglo para paella'."
-            }
+            return {"reply": "❌ No entendí tu pedido. Ejemplos: '1kg de pollo', '500g de ternera'. Escribe 'listo' para terminar."}
 
-        # Agregar los nuevos productos al pedido acumulado
-        if "pedido" not in session:
-            session["pedido"] = []
+        session.setdefault("pedido", [])
         session["pedido"].extend(items)
+        total, _ = calcular_total(session["pedido"])
+        return {"reply": f"✅ Producto añadido. Llevas {total:.2f}€.\nEscribe más productos o 'listo' para confirmar."}
 
-        total, detalles = calcular_total(session["pedido"])
-        sessions[user_id] = session
-        return {
-            "reply": f"✅ Producto añadido.\n💰 Total actual: {total:.2f}€\nEscribe otro producto o pon *listo* para finalizar."
-        }
-
-    elif session["step"] == "receta_personas":
+    elif step == "receta_personas":
         try:
-            personas = int(message.strip())
+            personas = int(mensaje)
             if personas <= 0:
                 raise ValueError
         except ValueError:
@@ -144,36 +142,29 @@ def process_message(data):
 
         receta = RECETAS_ESPECIALES[session["receta_nombre"]]
         items = []
-
         for item in receta["por_persona"]:
             items.append({
                 "producto": item["producto"],
                 "cantidad": item["cantidad"] * personas
             })
 
-        if "pedido" not in session:
-            session["pedido"] = []
-        session["pedido"].extend(items)
-
-        total, detalles = calcular_total(session["pedido"])
+        session["pedido"] = items
+        total, detalles = calcular_total(items)
         session["total"] = total
         session["detalle_pedido"] = detalles
         session["step"] = 3
-        sessions[user_id] = session
-
-        detalle_texto = "\n".join(detalles)
         return {
-            "reply": f"🧾 Pedido para {personas} personas:\n{detalle_texto}\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
+            "reply": f"🧾 Pedido para {personas} personas:\n" + "\n".join(detalles) +
+                     f"\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
         }
 
-    elif session["step"] == 3:
+    elif step == 3:
         if mensaje in ["sí", "si"]:
             if session.get("impreso"):
                 return {"reply": "✅ El pedido ya fue confirmado e impreso. Gracias."}
             send_to_printer(user_id, session)
             session["impreso"] = True
             session["step"] = 4
-            sessions[user_id] = session
             return {"reply": "✅ Pedido confirmado e impreso. ¡Gracias por tu compra!"}
         elif mensaje == "no":
             sessions.pop(user_id, None)
