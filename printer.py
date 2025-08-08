@@ -47,8 +47,8 @@ def send_to_printer(user_id, session):
     # Preparar el email
     msg = EmailMessage()
     msg["Subject"] = "Nuevo pedido"
-    msg["From"] = "EMAIL_USER"
-    msg["To"] = "PRINTER_EMAIL"
+    msg["From"] = "crocsdecars@gmail.com"
+    msg["To"] = "patatavfb6@gmail.com"
     msg.set_content("Pedido generado automáticamente")
 
     with open(filename, "rb") as f:
@@ -56,5 +56,5 @@ def send_to_printer(user_id, session):
 
     # Enviar por SMTP
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login("EMAIL_USER", "EMAIL_PASS")
+        smtp.login("crocsdecars@gmail.com", "Prueba123")
         smtp.send_message(msg)
