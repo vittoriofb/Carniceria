@@ -19,9 +19,9 @@ def send_to_printer(user_id, session):
 
     # Si es receta especial, imprimir título
     receta_nombre = session.get("receta_nombre")
-    if receta_nombre:
+    personas = session.get("personas")
+    if receta_nombre and personas:
         receta_texto = receta_nombre.capitalize()
-        personas = session.get("personas", "?")
         c.drawString(100, y, f"Receta especial: {receta_texto} para {personas} personas")
         y -= 30
 
