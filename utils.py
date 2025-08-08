@@ -78,15 +78,21 @@ def process_message(data):
     mensaje = message.lower().strip()
     session = sessions.get(user_id)
 
+    # Comando para reiniciar la sesión en cualquier momento
+    if mensaje == "reiniciar":
+        sessions.pop(user_id, None)
+        return {"reply": "✅ Sesión reiniciada. 👋 ¡Bienvenido a la carnicería! Para empezar, dime tu nombre. Puedes escribir 'reiniciar' en cualquier momento para comenzar de nuevo."}
+
     # Nueva sesión
     if not session:
         sessions[user_id] = {
             "step": 0,
             "pedido": [],
             "detalle_pedido": [],
-            "impreso": False
+            "impreso": False,
+            "personas": None
         }
-        return {"reply": "👋 ¡Bienvenido a la carnicería! Anotando un momento...\n¿Cuál es tu nombre?"}
+        return {"reply": "👋 ¡Bienvenido a la carnicería! Para empezar, dime tu nombre. Puedes escribir 'reiniciar' en cualquier momento para comenzar de nuevo."}
 
     step = session["step"]
 
@@ -105,13 +111,6 @@ def process_message(data):
         }
 
     elif step == 2:
-        if mensaje in RECETAS_ESPECIALES:
-            session["receta_nombre"] = mensaje
-            session["step"] = "receta_personas"
-            return {
-                "reply": f"🥘 {RECETAS_ESPECIALES[mensaje]['descripcion']}\n\n¿Cuántas personas van a comer?"
-            }
-
         if mensaje == "listo":
             if not session["pedido"]:
                 return {"reply": "⚠️ No has pedido nada aún. Escribe productos o una receta antes de confirmar."}
@@ -123,14 +122,22 @@ def process_message(data):
                 "reply": f"🧾 Este es tu pedido:\n" + "\n".join(detalles) + f"\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
             }
 
+        if mensaje in RECETAS_ESPECIALES:
+            # Pasa a pedir número de personas para la receta
+            session["receta_nombre"] = mensaje
+            session["step"] = "receta_personas"
+            return {
+                "reply": f"🥘 {RECETAS_ESPECIALES[mensaje]['descripcion']}\n\n¿Cuántas personas van a comer?"
+            }
+
         items = parse_quantity(mensaje)
         if not items:
-            return {"reply": "❌ No entendí tu pedido. Ejemplos: '1kg de pollo', '500g de ternera'. Escribe 'listo' para terminar."}
+            return {"reply": "❌ No entendí tu pedido. Ejemplos: '1kg de pollo', '500g de ternera'. Escribe 'listo' para terminar o 'reiniciar' para empezar de nuevo."}
 
         session.setdefault("pedido", [])
         session["pedido"].extend(items)
         total, _ = calcular_total(session["pedido"])
-        return {"reply": f"✅ Producto añadido. Llevas {total:.2f}€.\nEscribe más productos o 'listo' para confirmar."}
+        return {"reply": f"✅ Producto añadido. Llevas {total:.2f}€.\nEscribe más productos, recetas o 'listo' para confirmar."}
 
     elif step == "receta_personas":
         try:
@@ -148,14 +155,19 @@ def process_message(data):
                 "cantidad": item["cantidad"] * personas
             })
 
-        session["pedido"] = items
-        total, detalles = calcular_total(items)
+        session.setdefault("pedido", [])
+        session["pedido"].extend(items)  # Añado los productos de la receta al pedido actual
+
+        session["personas"] = personas  # Guardar para impresión
+
+        total, detalles = calcular_total(session["pedido"])
         session["total"] = total
         session["detalle_pedido"] = detalles
-        session["step"] = 3
+        session["step"] = 2  # vuelvo al paso 2 para que pueda seguir añadiendo productos o 'listo'
+
         return {
-            "reply": f"🧾 Pedido para {personas} personas:\n" + "\n".join(detalles) +
-                     f"\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
+            "reply": f"✅ Añadido arreglo para {personas} personas. Llevas {total:.2f}€ en total.\n"
+                     "Puedes seguir añadiendo productos, recetas o escribir 'listo' para terminar."
         }
 
     elif step == 3:
