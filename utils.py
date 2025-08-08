@@ -1,168 +1,188 @@
-import re
+import json
 from printer import send_to_printer
-
-# Productos disponibles y precios por kg
-PRODUCTOS_DB = {
-    "pollo": 6.50,
-    "ternera": 12.00,
-    "cerdo": 8.00,
-    "cordero": 13.50,
-    "conejo": 7.50,
-    "costilla": 8.00
-}
-
-# Recetas especiales por persona
-RECETAS_ESPECIALES = {
-    "arreglo para paella": {
-        "por_persona": [
-            {"producto": "pollo", "cantidad": 0.15},
-            {"producto": "conejo", "cantidad": 0.10},
-            {"producto": "costilla", "cantidad": 0.10}
-        ],
-        "descripcion": "Arreglo típico para paella valenciana"
-    },
-    "arreglo para cocido": {
-        "por_persona": [
-            {"producto": "ternera", "cantidad": 0.20},
-            {"producto": "pollo", "cantidad": 0.15},
-            {"producto": "cerdo", "cantidad": 0.15}
-        ],
-        "descripcion": "Arreglo clásico para cocido madrileño"
-    }
-}
+import re
 
 sessions = {}
 
+# Base de datos de productos (puedes moverlo a una BD real más adelante)
+PRODUCTOS = {
+    "pollo": 6.5,     # €/kg
+    "ternera": 12.0,
+    "cerdo": 9.0,
+    "chorizo": 8.0,
+    "morcilla": 7.0,
+    "costillas": 10.0,
+    "conejo": 11.0
+}
+
+# Recetas especiales con cantidades por persona
+RECETAS = {
+    "paella": {
+        "pollo": 150,
+        "conejo": 100,
+        "chorizo": 50,
+        "morcilla": 50
+    },
+    "barbacoa": {
+        "costillas": 200,
+        "chorizo": 100,
+        "cerdo": 150
+    }
+}
+
 def parse_quantity(text):
-    pattern = r"(?P<cantidad>\d+\.?\d*\s?(?:kg|kilos|gr|g|gramos|medio kilo|1/2 kilo)?)\s*(?:de\s)?(?P<producto>\w+)"
+    """
+    Convierte frases como '1kg de pollo' o '500g de ternera' en items de pedido.
+    Devuelve lista de tuplas: [(producto, cantidad_kg)]
+    """
+    import re
+
+    pattern = r"(\d+(?:[.,]?\d*)?)\s*(kg|g)?\s*(?:de\s+)?(\w+)"
     matches = re.findall(pattern, text.lower())
-
     items = []
-    for cantidad_text, producto in matches:
-        cantidad_text = cantidad_text.replace(",", ".").strip()
 
-        if "medio" in cantidad_text or "1/2" in cantidad_text:
-            cantidad = 0.5
-        elif "kg" in cantidad_text or "kilo" in cantidad_text:
-            cantidad = float(re.sub(r"[^\d.]", "", cantidad_text))
-        elif "g" in cantidad_text or "gramo" in cantidad_text:
-            cantidad = float(re.sub(r"[^\d.]", "", cantidad_text)) / 1000
-        else:
+    for cantidad, unidad, producto in matches:
+        producto = producto.strip()
+        if producto not in PRODUCTOS:
             continue
-
-        items.append({
-            "producto": producto,
-            "cantidad": cantidad
-        })
+        try:
+            cantidad = float(cantidad.replace(",", "."))
+            if unidad == "g":
+                cantidad = cantidad / 1000
+            elif unidad == "kg" or unidad is None:
+                pass
+            else:
+                continue
+            items.append((producto, cantidad))
+        except:
+            continue
 
     return items
 
-def calcular_total(pedido_items):
+def calcular_total(lista_pedidos):
+    """
+    Recibe lista de tuplas [(producto, cantidad_kg)] y devuelve total y detalles
+    """
     total = 0
     detalles = []
-    for item in pedido_items:
-        producto = item["producto"]
-        cantidad = item["cantidad"]
-        if producto in PRODUCTOS_DB:
-            precio_kg = PRODUCTOS_DB[producto]
-            subtotal = cantidad * precio_kg
-            total += subtotal
-            detalles.append(f"- {producto.capitalize()}: {cantidad:.2f} kg x {precio_kg:.2f}€/kg = {subtotal:.2f}€")
-        else:
-            detalles.append(f"- {producto} no está disponible.")
-    return total, detalles
+
+    for producto, cantidad in lista_pedidos:
+        precio = PRODUCTOS.get(producto, 0)
+        subtotal = precio * cantidad
+        total += subtotal
+        detalles.append(f"- {cantidad*1000:.0f}g de {producto}: {subtotal:.2f} €")
+
+    return round(total, 2), detalles
+
+def generar_pedido_receta(nombre_receta, personas):
+    ingredientes = RECETAS.get(nombre_receta)
+    if not ingredientes:
+        return [], 0, []
+
+    pedido = []
+    for producto, cantidad_por_persona in ingredientes.items():
+        total_cantidad = (cantidad_por_persona * personas) / 1000  # en kg
+        pedido.append((producto, total_cantidad))
+
+    total, detalles = calcular_total(pedido)
+    return pedido, total, detalles
 
 def process_message(data):
     user_id = data.get("user_id") or data.get("from")
     message = data.get("message") or data.get("text")
+    message = message.strip().lower()
     session = sessions.get(user_id, {"step": 0})
 
-    if session["step"] == 0:
-        session["nombre"] = message
-        session["step"] += 1
-        sessions[user_id] = session
-        return {"reply": f"Hola {session['nombre']} 👋 ¿A qué hora quieres recoger tu pedido?"}
+    if message in ["cancelar", "reiniciar"]:
+        sessions[user_id] = {"step": 0}
+        return {"reply": "🔄 Pedido cancelado. Empecemos de nuevo. ¿Cuál es tu nombre?"}
 
+    # Paso 0: Nombre
+    if session["step"] == 0:
+        session["nombre"] = message.title()
+        session["step"] = 1
+        sessions[user_id] = session
+        return {"reply": "¿A qué hora quieres recoger tu pedido?"}
+
+    # Paso 1: Hora
     elif session["step"] == 1:
         session["hora"] = message
-        session["step"] += 1
+        session["step"] = 2
+        session["temporal_pedido"] = []
         sessions[user_id] = session
+        return {
+            "reply": (
+                "Perfecto. Ahora puedes escribir tus productos uno a uno.\n"
+                "Ejemplo: '1kg de pollo', '400g de ternera', etc.\n"
+                "También puedes pedir arreglos como: 'arreglo para paella para 4 personas'.\n"
+                "Cuando termines, escribe *listo*."
+            )
+        }
 
-        productos_list = "\n".join([f"- {p.capitalize()} ({v:.2f}€/kg)" for p, v in PRODUCTOS_DB.items()])
-        recetas_list = "\n".join([f"- {r}" for r in RECETAS_ESPECIALES])
-        return {"reply": f"Estos son los productos disponibles:\n{productos_list}\n\nTambién puedes pedir recetas como:\n{recetas_list}\n\n¿Qué deseas pedir?"}
-
+    # Paso 2: Pedido línea por línea o receta
     elif session["step"] == 2:
-        mensaje = message.lower()
-
-        if mensaje in RECETAS_ESPECIALES:
-            session["receta_nombre"] = mensaje
-            session["step"] = "receta_personas"
+        if message == "listo":
+            if not session["temporal_pedido"]:
+                return {"reply": "No has agregado ningún producto. ¿Qué deseas pedir?"}
+            session["pedido"] = session["temporal_pedido"]
+            total, detalles = calcular_total(session["pedido"])
+            session["total"] = total
+            session["detalle_pedido"] = detalles
+            session["step"] = 3
             sessions[user_id] = session
-            return {"reply": f"🥘 {RECETAS_ESPECIALES[mensaje]['descripcion']}\n\n¿Cuántas personas van a comer?"}
 
-        items = parse_quantity(mensaje)
-        if not items:
+            texto_pedido = "\n".join(detalles)
             return {
-                "reply": "❌ No entendí tu pedido. Usa un formato como:\n'1kg de pollo y 500g de ternera' o 'arreglo para paella'."
+                "reply": f"🧾 Este es tu pedido:\n{texto_pedido}\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
             }
 
-        session["pedido"] = items
-        total, detalles = calcular_total(items)
-        session["total"] = total
-        session["detalle_pedido"] = detalles
-        session["step"] += 1
-        sessions[user_id] = session
+        # Arreglos especiales
+        elif "arreglo para" in message:
+            import re
+            match = re.search(r"arreglo para (\w+)(?: para (\d+))?", message)
+            if match:
+                receta = match.group(1)
+                personas = int(match.group(2)) if match.group(2) else 2
+                if receta in RECETAS:
+                    pedido, total, detalles = generar_pedido_receta(receta, personas)
+                    session["temporal_pedido"].extend(pedido)
+                    session["receta_nombre"] = receta
+                    session["personas"] = personas
+                    sessions[user_id] = session
+                    return {
+                        "reply": f"🧂 Arreglo para {receta} añadido para {personas} personas.\n"
+                                 "Puedes seguir añadiendo productos o escribir *listo*."
+                    }
+                else:
+                    return {"reply": "❌ No tenemos esa receta. Las disponibles son: " + ", ".join(RECETAS.keys())}
+            else:
+                return {"reply": "❌ Formato no reconocido. Ejemplo: 'arreglo para paella para 4 personas'."}
 
-        detalle_texto = "\n".join(detalles)
-        return {
-            "reply": f"🧾 Este es tu pedido:\n{detalle_texto}\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
-        }
-
-    elif session["step"] == "receta_personas":
-        try:
-            personas = int(message.strip())
-            if personas <= 0:
-                raise ValueError
-        except ValueError:
-            return {"reply": "Por favor, indica un número válido de personas (ejemplo: 4)."}
-
-        receta = RECETAS_ESPECIALES[session["receta_nombre"]]
-        items = []
-
-        for item in receta["por_persona"]:
-            items.append({
-                "producto": item["producto"],
-                "cantidad": item["cantidad"] * personas
-            })
-
-        session["pedido"] = items
-        total, detalles = calcular_total(items)
-        session["total"] = total
-        session["detalle_pedido"] = detalles
-        session["step"] = 3
-        sessions[user_id] = session
-
-        detalle_texto = "\n".join(detalles)
-        return {
-            "reply": f"🧾 Pedido para {personas} personas:\n{detalle_texto}\n\n💰 Total: {total:.2f}€\n¿Deseas confirmar el pedido? (sí/no)"
-        }
-
-    elif session["step"] == 3:
-        if message.lower() in ["sí", "si"]:
-            if session.get("impreso"):
-                return {"reply": "✅ El pedido ya fue confirmado e impreso. Gracias."}
-            send_to_printer(user_id, session)
-            session["impreso"] = True
-            session["step"] += 1
-            sessions[user_id] = session
-            return {"reply": "✅ Pedido confirmado e impreso. ¡Gracias por tu compra!"}
-        elif message.lower() == "no":
-            sessions.pop(user_id, None)
-            return {"reply": "❌ Pedido cancelado. Si deseas hacer otro pedido, escribe cualquier mensaje."}
+        # Productos normales
         else:
-            return {"reply": "❓ Por favor responde con 'sí' para confirmar o 'no' para cancelar."}
+            items = parse_quantity(message)
+            if not items:
+                return {
+                    "reply": "❌ No entendí ese producto. Usa el formato: '1kg de pollo' o prueba con 'arreglo para paella para 4 personas'."
+                }
+            session["temporal_pedido"].extend(items)
+            sessions[user_id] = session
+            return {"reply": "✅ Producto añadido. Escribe otro o pon *listo* para terminar."}
 
+    # Paso 3: Confirmar pedido
+    elif session["step"] == 3:
+        if message == "sí":
+            send_to_printer(user_id, session)
+            session["step"] = 4
+            sessions[user_id] = session
+            return {"reply": "✅ Pedido confirmado. ¡Gracias por tu compra!"}
+        elif message == "no":
+            sessions[user_id] = {"step": 0}
+            return {"reply": "❌ Pedido cancelado. Si deseas hacer otro, escribe cualquier mensaje."}
+        else:
+            return {"reply": "Por favor, responde con 'sí' o 'no'."}
+
+    # Paso 4: Finalizado
     else:
-        sessions.pop(user_id, None)
+        sessions[user_id] = {"step": 0}
         return {"reply": "¿Deseas hacer otro pedido? Escribe cualquier cosa para comenzar de nuevo."}
