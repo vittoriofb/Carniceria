@@ -78,11 +78,7 @@ def process_message(data):
     mensaje = message.lower().strip()
     session = sessions.get(user_id)
 
-    # Comando para reiniciar la sesión en cualquier momento
-    if mensaje == "reiniciar":
-        sessions.pop(user_id, None)
-        return {"reply": "✅ Sesión reiniciada. 👋 ¡Bienvenido a la carnicería! Para empezar, dime tu nombre. Puedes escribir 'reiniciar' en cualquier momento para comenzar de nuevo."}
-
+   
     # Nueva sesión
     if not session:
         sessions[user_id] = {
@@ -94,9 +90,14 @@ def process_message(data):
         }
         return {"reply": "👋 ¡Bienvenido a la carnicería! Para empezar, dime tu nombre. Puedes escribir 'reiniciar' en cualquier momento para comenzar de nuevo."}
 
+     # Comando para reiniciar la sesión en cualquier momento
+    if mensaje == "reiniciar":
+        sessions.pop(user_id, None)
+        return {"reply": "✅ Sesión reiniciada. 👋 ¡Bienvenido a la carnicería! Para empezar, dime tu nombre. \n Puedes escribir 'reiniciar' en cualquier momento para comenzar de nuevo."}
+
     step = session["step"]
 
-    if step == 0:
+    elif step == 0:
         session["nombre"] = message
         session["step"] = 1
         return {"reply": f"Hola {session['nombre']} 👋 ¿A qué hora quieres recoger tu pedido?"}
@@ -187,3 +188,6 @@ def process_message(data):
     else:
         sessions.pop(user_id, None)
         return {"reply": "¿Deseas hacer otro pedido? Escribe cualquier cosa para comenzar de nuevo."}
+
+
+    
