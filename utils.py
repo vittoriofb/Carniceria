@@ -97,7 +97,7 @@ def process_message(data):
 
     step = session["step"]
 
-    elif step == 0:
+    if step == 0:
         session["nombre"] = message
         session["step"] = 1
         return {"reply": f"Hola {session['nombre']} 👋 ¿A qué hora quieres recoger tu pedido?"}
