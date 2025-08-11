@@ -1,60 +1,74 @@
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-import smtplib
-from email.message import EmailMessage
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+import os
+import logging
 
 def send_to_printer(user_id, session):
-    filename = f"/tmp/pedido_{user_id}.pdf"
-    c = canvas.Canvas(filename, pagesize=A4)
+    """
+    Genera un PDF con el pedido y lo envía por correo usando SendGrid.
+    """
+    try:
+        filename = f"/tmp/pedido_{user_id}.pdf"
+        c = canvas.Canvas(filename, pagesize=A4)
 
-    y = 800  # Posición inicial vertical
-
-    # Datos del cliente
-    nombre = session.get("nombre", "Cliente")
-    hora = session.get("hora", "No especificada")
-    c.drawString(100, y, f"Nombre: {nombre}")
-    y -= 20
-    c.drawString(100, y, f"Hora de recogida: {hora}")
-    y -= 30
-
-    # Si es receta especial, imprimir título
-    receta_nombre = session.get("receta_nombre")
-    personas = session.get("personas")
-    if receta_nombre and personas:
-        receta_texto = receta_nombre.capitalize()
-        c.drawString(100, y, f"Receta especial: {receta_texto} para {personas} personas")
+        y = 800
+        nombre = session.get("nombre", "Cliente")
+        hora = session.get("hora", "No especificada")
+        c.drawString(100, y, f"Nombre: {nombre}")
+        y -= 20
+        c.drawString(100, y, f"Hora de recogida: {hora}")
         y -= 30
 
-    # Pedido
-    c.drawString(100, y, "Detalle del pedido:")
-    y -= 20
-    for linea in session.get("detalle_pedido", []):
-        if y < 100:
-            c.showPage()
-            y = 800
-        c.drawString(120, y, linea)
-        y -= 20
+        if "producto" in session:
+            c.drawString(100, y, f"Producto: {session['producto']}")
+            y -= 20
+        if "cantidad" in session:
+            c.drawString(100, y, f"Cantidad: {session['cantidad']} kg")
+            y -= 20
+        if "total" in session:
+            c.drawString(100, y, f"Total: {session['total']:.2f} €")
+            y -= 30
 
-    # Total
-    y -= 20
-    total = session.get("total", 0)
-    c.drawString(100, y, f"Total: {total:.2f} €")
+        c.save()
 
-    y -= 40
-    c.drawString(100, y, "¡Gracias por tu compra!")
-    c.save()
+        enviar_correo(
+            destinatario="patatavfb6@gmail.com",  # Cambiar por destino real
+            asunto="Tu pedido en la carnicería",
+            contenido="Adjunto encontrarás tu ticket en PDF.",
+            archivo=filename
+        )
 
-    # Preparar el email
-    msg = EmailMessage()
-    msg["Subject"] = "Nuevo pedido"
-    msg["From"] = "crocsdecars@gmail.com"
-    msg["To"] = "patatavfb6@gmail.com"
-    msg.set_content("Pedido generado automáticamente")
+    except Exception as e:
+        logging.exception("Error generando o enviando el ticket")
 
-    with open(filename, "rb") as f:
-        msg.add_attachment(f.read(), maintype="application", subtype="pdf", filename=filename)
 
-    # Enviar por SMTP
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login("crocsdecars@gmail.com", "Prueba123")
-        smtp.send_message(msg)
+def enviar_correo(destinatario, asunto, contenido, archivo=None):
+    """
+    Envía un correo usando SendGrid con adjunto opcional.
+    """
+    try:
+        message = Mail(
+            from_email="vbavierita@gmail.com",
+            to_emails=destinatario,
+            subject=asunto,
+            html_content=contenido
+        )
+
+        if archivo and os.path.exists(archivo):
+            with open(archivo, "rb") as f:
+                import base64
+                message.add_attachment(
+                    base64.b64encode(f.read()).decode(),
+                    "application/pdf",
+                    os.path.basename(archivo),
+                    "attachment"
+                )
+
+        sg = SendGridAPIClient(os.environ.get('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'))
+        sg.send(message)
+        logging.info(f"Correo enviado a {destinatario}")
+
+    except Exception as e:
+        logging.exception("Error enviando correo con SendGrid")
