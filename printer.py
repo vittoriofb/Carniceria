@@ -66,7 +66,8 @@ def enviar_correo(destinatario, asunto, contenido, archivo=None):
                     "attachment"
                 )
 
-        sg = SendGridAPIClient(os.environ.get('SG.RkmfyZxpX61FZVmwfBGNfwGzbSv2lcrg'))
+        sg = SendGridAPIClient(os.environ.get('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
+'))
         sg.send(message)
         logging.info(f"Correo enviado a {destinatario}")
 
