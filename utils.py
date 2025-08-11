@@ -40,74 +40,87 @@ def process_message(data):
         if not user_id:
             return {"reply": "Error: usuario no identificado."}
 
+        # Crear sesión si no existe
         if user_id not in SESSIONS:
-            SESSIONS[user_id] = {"step": "welcome"}
+            SESSIONS[user_id] = {"modo": None, "paso": 0}
 
         session = SESSIONS[user_id]
 
-        # Paso 1: Bienvenida
-        if session["step"] == "welcome":
-            session["step"] = "ask_name"
-            return {"reply": "👋 ¡Bienvenido a la Carnicería El Buen Corte!\nPor favor, escribe tu nombre de la forma:\n\nNombre: Juan Pérez"}
+        # Comando para iniciar pedido en cualquier momento
+        if "iniciar pedido" in message:
+            session["modo"] = "pedido"
+            session["paso"] = 1
+            session.clear()
+            session.update({"modo": "pedido", "paso": 1})
+            return {"reply": "Perfecto, vamos a iniciar tu pedido. ¿Cuál es tu nombre?"}
 
-        # Paso 2: Guardar nombre
-        if session["step"] == "ask_name":
-            match_name = re.match(r"(nombre\s*:\s*)(.+)", message)
-            if match_name:
-                session["nombre"] = match_name.group(2).strip().title()
-                session["step"] = "ask_hour"
-                return {"reply": f"Gracias {session['nombre']} 😊\nAhora, indica la hora de recogida así:\n\nHora: 13:30"}
+        # Si no hay modo asignado aún → pregunta inicial
+        if session["modo"] is None:
+            if "pedido" in message:
+                session["modo"] = "pedido"
+                session["paso"] = 1
+                return {"reply": "Perfecto, vamos a iniciar tu pedido. ¿Cuál es tu nombre?"}
+            elif "conversar" in message:
+                session["modo"] = "conversacion"
+                return {"reply": "Claro, conversemos 😊. Puedes escribirme lo que quieras, y si en algún momento quieres iniciar un pedido escribe 'iniciar pedido'."}
             else:
-                return {"reply": "Por favor, escribe tu nombre con el formato:\nNombre: Juan Pérez"}
+                return {"reply": "Bienvenido a la carnicería 🥩. ¿Quieres 'iniciar pedido' o 'conversar'?"}
 
-        # Paso 3: Guardar hora
-        if session["step"] == "ask_hour":
-            match_hour = re.match(r"(hora\s*:\s*)(\d{1,2}:\d{2})", message)
-            if match_hour:
-                session["hora"] = match_hour.group(2)
-                session["step"] = "ask_product"
+        # Modo conversación libre
+        if session["modo"] == "conversacion":
+            return {"reply": f"Entiendo, me dices: {message}. Recuerda que puedes escribir 'iniciar pedido' en cualquier momento para hacer un pedido."}
+
+        # Modo pedido paso a paso
+        if session["modo"] == "pedido":
+            # Paso 1: Nombre
+            if session["paso"] == 1:
+                session["nombre"] = message
+                session["paso"] = 2
+                return {"reply": f"Encantado {session['nombre']}. ¿A qué hora pasarás a recoger tu pedido?"}
+
+            # Paso 2: Hora de recogida
+            if session["paso"] == 2:
+                session["hora"] = message
+                session["paso"] = 3
                 catalogo = "\n".join([f"- {prod} ({precio}€/kg)" for prod, precio in PRODUCTOS_DB.items()])
-                return {"reply": f"Perfecto, recogerás tu pedido a las {session['hora']} ⏰\n\nAquí tienes nuestro catálogo:\n{catalogo}\n\nEscribe el nombre del producto tal cual aparece para continuar."}
-            else:
-                return {"reply": "Formato incorrecto. Ejemplo válido:\nHora: 13:30"}
+                return {"reply": f"Perfecto. Estos son nuestros productos:\n{catalogo}\n\nIndica el producto que quieres."}
 
-        # Paso 4: Elegir producto
-        if session["step"] == "ask_product":
-            if message in PRODUCTOS_DB:
-                session["producto"] = message
-                session["step"] = "ask_quantity"
-                precio = PRODUCTOS_DB[message]
-                return {"reply": f"El precio del {message} es {precio}€/kg.\nEscribe la cantidad así:\n\n2 kg"}
-            else:
-                return {"reply": "Producto no válido. Elige uno del catálogo enviado."}
+            # Paso 3: Selección de producto
+            if session["paso"] == 3:
+                if message in PRODUCTOS_DB:
+                    session["producto"] = message
+                    session["paso"] = 4
+                    return {"reply": f"Has elegido {message}. ¿Cuántos kilos quieres? (Ejemplo: '2 kg')"}
+                else:
+                    return {"reply": "Ese producto no está en el catálogo, por favor elige uno de la lista."}
 
-        # Paso 5: Cantidad
-        if session["step"] == "ask_quantity":
-            match_kg = re.search(r"(\d+(?:\.\d+)?)\s*kg", message)
-            if match_kg:
-                kilos = float(match_kg.group(1))
-                producto = session["producto"]
-                total = kilos * PRODUCTOS_DB[producto]
-                session["cantidad"] = kilos
-                session["total"] = total
-                session["step"] = "confirm"
-                return {"reply": f"Perfecto. El total será {total:.2f}€.\nEscribe 'Confirmar' para finalizar tu pedido."}
-            else:
-                return {"reply": "Formato incorrecto. Ejemplo válido:\n2 kg"}
+            # Paso 4: Cantidad
+            if session["paso"] == 4:
+                match_kg = re.search(r"(\d+(?:\.\d+)?)\s*kg", message)
+                if match_kg:
+                    kilos = float(match_kg.group(1))
+                    producto = session["producto"]
+                    total = kilos * PRODUCTOS_DB[producto]
+                    session["cantidad"] = kilos
+                    session["total"] = total
+                    session["paso"] = 5
+                    return {"reply": f"El total será {total:.2f}€. Escribe 'confirmar' para finalizar el pedido o 'cancelar' para anularlo."}
+                else:
+                    return {"reply": "Por favor indica la cantidad en kilos. Ejemplo: '1.5 kg'"}
 
-        # Paso 6: Confirmar
-        if session["step"] == "confirm":
-            if "confirmar" in message:
-                send_to_printer(user_id, session)
-                session["step"] = "done"
-                return {"reply": "✅ Pedido confirmado. Te hemos enviado el ticket por correo."}
-            else:
-                return {"reply": "Para confirmar, escribe:\nConfirmar"}
+            # Paso 5: Confirmación
+            if session["paso"] == 5:
+                if "confirmar" in message:
+                    send_to_printer(user_id, session)
+                    SESSIONS.pop(user_id, None)
+                    return {"reply": "Pedido confirmado ✅. Te hemos enviado el ticket por correo."}
+                elif "cancelar" in message:
+                    SESSIONS.pop(user_id, None)
+                    return {"reply": "Pedido cancelado ❌. Puedes iniciar otro cuando quieras."}
+                else:
+                    return {"reply": "Responde con 'confirmar' o 'cancelar'."}
 
-        # Conversación finalizada
-        if session["step"] == "done":
-            return {"reply": "Tu pedido ya fue confirmado. Si quieres hacer otro, escribe 'Hola'."}
-
+        # Si no entra en nada
         return {"reply": "No entendí tu mensaje, ¿puedes repetirlo?"}
 
     except Exception:
