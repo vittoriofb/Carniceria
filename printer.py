@@ -3,7 +3,7 @@ import logging
 import base64
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
-from utils import PRODUCTOS_DB  # Importar catálogo de precios
+from data import PRODUCTOS_DB
 
 def send_to_printer(user_id, session):
     """
