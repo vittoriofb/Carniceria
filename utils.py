@@ -20,7 +20,7 @@ def process_message(data):
         message = data.get("message", "").strip().lower()
 
         if not user_id:
-            return {"reply": "Error: usuario no identificado."}
+            return "Error: usuario no identificado."
 
         # Crear sesión si no existe
         if user_id not in SESSIONS:
@@ -39,37 +39,37 @@ def process_message(data):
                 if session["paso"] == 2:
                     session.pop("nombre", None)
                     session["paso"] = 1
-                    return {"reply": "Has vuelto atrás ↩️. Vamos de nuevo.\n¿Cuál es tu nombre?"}
+                    return "Has vuelto atrás ↩️. Vamos de nuevo.\n¿Cuál es tu nombre?"
                 elif session["paso"] == 3:
                     session.pop("hora", None)
                     session["paso"] = 2
-                    return {"reply": "Has vuelto atrás ↩️. Por favor, indícanos la hora en formato HH:MM (ej. 15:00)."}
+                    return "Has vuelto atrás ↩️. Por favor, indícanos la hora en formato HH:MM (ej. 15:00)."
                 elif session["paso"] == 4:
                     session["paso"] = 3
-                    return {"reply": f"Has vuelto atrás ↩️. Lista actual:\n{mostrar_carrito(session)}\nDime si quieres añadir o quitar algo."}
+                    return f"Has vuelto atrás ↩️. Lista actual:\n{mostrar_carrito(session)}\nDime si quieres añadir o quitar algo."
             else:
-                return {"reply": "No puedes retroceder más, estamos al inicio del pedido."}
+                return "No puedes retroceder más, estamos al inicio del pedido."
 
         # --- INICIAR PEDIDO ---
         if "iniciar pedido" in message:
             session.clear()
             session.update({"modo": "pedido", "paso": 1, "carrito": {}, "msg_count": 0})
-            return {"reply": "Genial 👍. Vamos a empezar tu pedido.\n¿Cuál es tu nombre?"}
+            return "Genial 👍. Vamos a empezar tu pedido.\n¿Cuál es tu nombre?"
 
         # --- MODO LIBRE ---
         if session["modo"] is None:
             session["msg_count"] += 1
             if session["msg_count"] == 1:
-                return {"reply": (
+                return (
                     "Hola 😊. Bienvenido a la carnicería.\n"
                     "⏰ *Horario*: Lunes a Sábado de 9:00 a 14:00 y de 17:00 a 20:00.\n"
                     "Puedes escribirme lo que quieras sin necesidad de iniciar un pedido.\n"
                     "Cuando quieras encargar algo, simplemente escribe *'iniciar pedido'*."
-                )}
+                )
             elif session["msg_count"] % 3 == 0:
-                return {"reply": "Recuerda que para encargar algo debes escribir *'iniciar pedido'*."}
+                return "Recuerda que para encargar algo debes escribir *'iniciar pedido'*."
             else:
-                return {"reply": "Estoy aquí para ayudarte 😊."}
+                return "Estoy aquí para ayudarte 😊."
 
         # --- MODO PEDIDO ---
         if session["modo"] == "pedido":
@@ -78,7 +78,7 @@ def process_message(data):
             if session["paso"] == 1:
                 session["nombre"] = message
                 session["paso"] = 2
-                return {"reply": f"Encantado {session['nombre'].capitalize()} 😊. ¿A qué hora pasarás a recoger tu pedido? (Formato HH:MM, 24h)"}
+                return f"Encantado {session['nombre'].capitalize()} 😊. ¿A qué hora pasarás a recoger tu pedido? (Formato HH:MM, 24h)"
 
             # Paso 2: Hora
             if session["paso"] == 2:
@@ -86,14 +86,14 @@ def process_message(data):
                     session["hora"] = message
                     session["paso"] = 3
                     catalogo = "\n".join([f"- {prod} ({precio}€/kg)" for prod, precio in PRODUCTOS_DB.items()])
-                    return {"reply": (
+                    return (
                         f"Perfecto. Estos son nuestros productos:\n{catalogo}\n\n"
                         "Dime qué quieres y cuántos kilos. Ejemplo: 'pollo 2 kg'.\n"
                         "Para eliminar un producto: 'eliminar pollo'.\n"
                         "Cuando termines, escribe 'listo'."
-                    )}
+                    )
                 else:
-                    return {"reply": "Formato de hora no válido. Ejemplo correcto: 15:00 (usa formato 24h)."}
+                    return "Formato de hora no válido. Ejemplo correcto: 15:00 (usa formato 24h)."
 
             # Paso 3: Añadir o eliminar productos
             if session["paso"] == 3:
@@ -102,17 +102,17 @@ def process_message(data):
                     producto = message.replace("eliminar ", "").strip()
                     if producto in session["carrito"]:
                         session["carrito"].pop(producto)
-                        return {"reply": f"{producto} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"}
+                        return f"{producto} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
                     else:
-                        return {"reply": f"No tienes {producto} en tu carrito."}
+                        return f"No tienes {producto} en tu carrito."
 
                 if message == "listo":
                     if not session["carrito"]:
-                        return {"reply": "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."}
+                        return "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
                     total = sum(cant * PRODUCTOS_DB[prod] for prod, cant in session["carrito"].items())
                     session["total"] = total
                     session["paso"] = 4
-                    return {"reply": f"Este es tu pedido:\n{mostrar_carrito(session)}\n💰 Total: {total:.2f}€\nEscribe 'confirmar' para finalizar o 'cancelar' para anular."}
+                    return f"Este es tu pedido:\n{mostrar_carrito(session)}\n💰 Total: {total:.2f}€\nEscribe 'confirmar' para finalizar o 'cancelar' para anular."
 
                 match = re.match(r"([a-záéíóúñ ]+)\s+(\d+(?:\.\d+)?)\s*kg", message)
                 if match:
@@ -120,11 +120,11 @@ def process_message(data):
                     cantidad = float(match.group(2))
                     if producto in PRODUCTOS_DB:
                         session["carrito"][producto] = session["carrito"].get(producto, 0) + cantidad
-                        return {"reply": f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"}
+                        return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
                     else:
-                        return {"reply": "Ese producto no está en el catálogo."}
+                        return "Ese producto no está en el catálogo."
 
-                return {"reply": "Formato no válido. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."}
+                return "Formato no válido. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."
 
             # Paso 4: Confirmación
             if session["paso"] == 4:
@@ -138,15 +138,15 @@ def process_message(data):
                     )
                     send_to_printer(user_id, session)
                     SESSIONS.pop(user_id, None)
-                    return {"reply": resumen}
+                    return resumen
                 elif "cancelar" in message:
                     SESSIONS.pop(user_id, None)
-                    return {"reply": "Pedido cancelado ❌."}
+                    return "Pedido cancelado ❌."
                 else:
-                    return {"reply": "Responde con 'confirmar' o 'cancelar'."}
+                    return "Responde con 'confirmar' o 'cancelar'."
 
-        return {"reply": "No entendí tu mensaje 🤔."}
+        return "No entendí tu mensaje 🤔."
 
     except Exception:
         logging.exception("Error en process_message")
-        return {"reply": "Hubo un error interno procesando tu mensaje."}
+        return "Hubo un error interno procesando tu mensaje."
