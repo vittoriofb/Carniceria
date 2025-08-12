@@ -33,13 +33,17 @@ def process_message(data):
             session.update({"modo": "pedido", "paso": 1, "carrito": {}})
             return {"reply": "Hola 😊. Este servicio ahora es automático: me dices lo que quieres comprar y yo lo apunto. Puedes pedirme varias cosas una a una y, cuando hayas terminado, me dices 'listo'. Vamos a empezar. ¿Cuál es tu nombre?"}
 
-        # Si no hay modo asignado aún → mensaje inicial
-        if session["modo"] is None:
-            return {"reply": "Hola 😊. Bienvenido a la carnicería. Ahora tenemos un sistema muy fácil: si quieres hacer un pedido, escribe 'iniciar pedido'. Si solo quieres hablar, escríbeme lo que quieras."}
+        # Comando para volver atrás
+        if "volver atras" in message and session["modo"] == "pedido":
+            if session["paso"] > 1:
+                session["paso"] -= 1
+                return {"reply": f"Has vuelto al paso {session['paso']}. Vamos a repetirlo."}
+            else:
+                return {"reply": "No puedes retroceder más, estamos al inicio del pedido."}
 
-        # --- MODO CONVERSACIÓN LIBRE ---
-        if session["modo"] == "conversacion":
-            return {"reply": f"Me dices: {message}. Recuerda que si quieres encargar algo escribe 'iniciar pedido'."}
+        # Si no hay modo asignado aún
+        if session["modo"] is None:
+            return {"reply": "Hola 😊. Bienvenido a la carnicería. Si quieres hacer un pedido, escribe 'iniciar pedido'."}
 
         # --- MODO PEDIDO ---
         if session["modo"] == "pedido":
@@ -48,14 +52,17 @@ def process_message(data):
             if session["paso"] == 1:
                 session["nombre"] = message
                 session["paso"] = 2
-                return {"reply": f"Encantado {session['nombre']} 😊. ¿A qué hora pasarás a recoger tu pedido?"}
+                return {"reply": f"Encantado {session['nombre']} 😊. ¿A qué hora pasarás a recoger tu pedido? (Formato HH:MM, 24h)"}
 
-            # Paso 2: Hora de recogida
+            # Paso 2: Hora de recogida (validar formato HH:MM)
             if session["paso"] == 2:
-                session["hora"] = message
-                session["paso"] = 3
-                catalogo = "\n".join([f"- {prod} ({precio}€/kg)" for prod, precio in PRODUCTOS_DB.items()])
-                return {"reply": f"Perfecto. Estos son nuestros productos:\n{catalogo}\n\nDime qué quieres y cuántos kilos. Ejemplo: 'pollo 2 kg'. Puedes pedirme varias cosas y, cuando termines, escribe 'listo'."}
+                if re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", message):
+                    session["hora"] = message
+                    session["paso"] = 3
+                    catalogo = "\n".join([f"- {prod} ({precio}€/kg)" for prod, precio in PRODUCTOS_DB.items()])
+                    return {"reply": f"Perfecto. Estos son nuestros productos:\n{catalogo}\n\nDime qué quieres y cuántos kilos. Ejemplo: 'pollo 2 kg'. Puedes pedirme varias cosas y, cuando termines, escribe 'listo'."}
+                else:
+                    return {"reply": "Formato de hora no válido. Ejemplo correcto: 15:00 (usa formato 24h)."}
 
             # Paso 3: Añadir productos al carrito
             if session["paso"] == 3:
@@ -77,9 +84,9 @@ def process_message(data):
                         session["carrito"][producto] = session["carrito"].get(producto, 0) + cantidad
                         return {"reply": f"{producto} añadido ({cantidad} kg). Puedes seguir pidiendo o escribe 'listo' para terminar."}
                     else:
-                        return {"reply": "Ese producto no está en el catálogo, revisa la lista y escribe de nuevo."}
+                        return {"reply": "Ese producto no está en el catálogo. Revisa la lista y escribe de nuevo."}
                 else:
-                    return {"reply": "Formato no válido. Ejemplo: 'pollo 2 kg'. Si ya has terminado, escribe 'listo'."}
+                    return {"reply": "Formato no válido. Ejemplo correcto: 'pollo 2 kg'. Si ya has terminado, escribe 'listo'."}
 
             # Paso 4: Confirmación
             if session["paso"] == 4:
