@@ -35,6 +35,10 @@ def webhook():
             else:
                 final_text = str(resultado)
 
+            # Quitar "Reply:" si aparece al inicio
+            if final_text.strip().lower().startswith("reply:"):
+                final_text = final_text.split(":", 1)[1].strip()
+
             safe_text = html.escape(final_text)
             twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{safe_text}</Message></Response>'
             return Response(twiml, mimetype="application/xml")
