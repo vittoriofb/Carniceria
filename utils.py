@@ -1,6 +1,6 @@
 import logging
 import re
-from printer import send_to_printer
+from printer import enviar_correo
 
 PRODUCTOS_DB = {
     "pollo": 6.50,
