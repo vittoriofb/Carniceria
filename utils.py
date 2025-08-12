@@ -84,7 +84,7 @@ def process_message(data):
             # Paso 4: Confirmación
             if session["paso"] == 4:
                 if "confirmar" in message:
-                    send_to_printer(user_id, session)
+                    enviar_correo(user_id, session)
                     SESSIONS.pop(user_id, None)
                     return {"reply": "Pedido confirmado ✅. Te hemos enviado el ticket por correo."}
                 elif "cancelar" in message:
