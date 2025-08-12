@@ -3,22 +3,13 @@ from utils import process_message
 import logging
 import os
 import html
-import threading
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-def procesar_en_segundo_plano(datos):
-    """Procesa el mensaje sin bloquear la respuesta a Twilio."""
-    try:
-        process_message(datos)
-    except Exception:
-        logging.exception("❌ Error en procesamiento en segundo plano")
-
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        # Detectar origen Twilio o curl
         from_number = request.form.get("From") or request.form.get("user_id")
         body = request.form.get("Body") or request.form.get("message")
 
@@ -31,18 +22,21 @@ def webhook():
                 mimetype="application/xml"
             )
 
-        # Si viene de Twilio (WhatsApp), responder rápido y procesar después
+        # Si viene de Twilio (WhatsApp), contestar directamente con TwiML
         if request.form.get("From") and request.form.get("Body"):
-            # Respuesta fija inicial para que el usuario no espere
-            safe_text = html.escape("Procesando tu pedido...")
-            twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{safe_text}</Message></Response>'
-
-            # Procesar en segundo plano
-            threading.Thread(target=procesar_en_segundo_plano, args=({
+            resultado = process_message({
                 "user_id": from_number,
                 "message": body
-            },)).start()
+            })
 
+            # Determinar texto final
+            if isinstance(resultado, dict) and "respuesta" in resultado:
+                final_text = resultado["respuesta"]
+            else:
+                final_text = str(resultado)
+
+            safe_text = html.escape(final_text)
+            twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{safe_text}</Message></Response>'
             return Response(twiml, mimetype="application/xml")
 
         # Si viene de curl, procesar normalmente y devolver JSON
@@ -50,7 +44,6 @@ def webhook():
             "user_id": from_number,
             "message": body
         })
-
         return jsonify(result)
 
     except Exception:
