@@ -4,93 +4,55 @@ import base64
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 
-
-def send_to_printer(user_id, session):
-    """
-    Simula el envío del ticket a la impresora y al correo electrónico.
-    """
-    try:
-        # Generar ticket en formato texto
-        ticket_path = generar_ticket(user_id, session)
-
-        # Enviar por correo
-        enviar_correo(ticket_path, session)
-
-    except Exception:
-        logging.exception("Error en send_to_printer")
-
-
-def generar_ticket(user_id, session):
-    """
-    Genera un ticket de compra en un archivo de texto y devuelve la ruta.
-    """
-    ticket_text = []
-    ticket_text.append("=== CARNICERÍA EL BUEN CORTE ===")
-    ticket_text.append(f"Cliente: {user_id}")
-    ticket_text.append("")
-
-    total = 0
-    for producto, kilos in session.get("pedido", {}).items():
-        precio_unitario = session["precios"][producto]
-        subtotal = precio_unitario * kilos
-        total += subtotal
-        ticket_text.append(f"{producto.capitalize():<10} {kilos:.2f} kg  {precio_unitario:.2f} €/kg  -> {subtotal:.2f} €")
-
-    ticket_text.append("")
-    ticket_text.append(f"TOTAL: {total:.2f} €")
-    ticket_text.append(f"Hora recogida: {session.get('hora_recogida', 'No indicada')}")
-    ticket_text.append("================================")
-    ticket_text.append("¡Gracias por su compra!")
-
-    ruta_ticket = f"/tmp/ticket_{user_id}.txt"
-    with open(ruta_ticket, "w", encoding="utf-8") as f:
-        f.write("\n".join(ticket_text))
-
-    return ruta_ticket
-
-
 def enviar_correo(ruta_ticket, session):
     """
     Envía el ticket por correo usando SendGrid.
-    Lee las credenciales desde variables de entorno.
     """
     try:
+        # Leer variables de entorno
         SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-        DESTINATARIO = os.getenv("EMAIL_DESTINO", "vbavierita@gmail.com")
-        REMITENTE = os.getenv("EMAIL_REMITENTE", "noreply@carniceria.com")
+        REMITENTE = os.getenv("EMAIL_REMITENTE")
+        DESTINATARIO = os.getenv("EMAIL_DESTINO")
 
+        # Validaciones
         if not SENDGRID_API_KEY:
-            logging.error("Falta la variable de entorno SENDGRID_API_KEY")
+            logging.error("❌ Falta la variable de entorno SENDGRID_API_KEY en Render.")
+            return
+        if not REMITENTE:
+            logging.error("❌ Falta la variable de entorno EMAIL_REMITENTE en Render.")
+            return
+        if not DESTINATARIO:
+            logging.error("❌ Falta la variable de entorno EMAIL_DESTINO en Render.")
             return
 
-        asunto = "Ticket de compra - Carnicería El Buen Corte"
-        cuerpo = "Adjunto encontrará su ticket de compra. ¡Gracias por confiar en nosotros!"
-
+        # Crear el mensaje
+        asunto = "Ticket de tu pedido en Carnicería"
+        contenido = f"Hola,\n\nAdjuntamos el ticket de tu pedido:\n\n{session}\n\n¡Gracias por tu compra!"
         message = Mail(
             from_email=REMITENTE,
             to_emails=DESTINATARIO,
             subject=asunto,
-            plain_text_content=cuerpo
+            plain_text_content=contenido
         )
 
-        # Adjuntar ticket
-        with open(ruta_ticket, "rb") as f:
-            data = f.read()
-            encoded_file = base64.b64encode(data).decode()
+        # Adjuntar el archivo del ticket
+        if ruta_ticket and os.path.exists(ruta_ticket):
+            with open(ruta_ticket, "rb") as f:
+                data = f.read()
+                encoded_file = base64.b64encode(data).decode()
 
-        attached_file = Attachment(
-            FileContent(encoded_file),
-            FileName(os.path.basename(ruta_ticket)),
-            FileType("text/plain"),
-            Disposition("attachment")
-        )
+            attachment = Attachment()
+            attachment.file_content = FileContent(encoded_file)
+            attachment.file_type = FileType("application/pdf")  # O "text/plain" si no es PDF
+            attachment.file_name = FileName(os.path.basename(ruta_ticket))
+            attachment.disposition = Disposition("attachment")
+            message.attachment = attachment
 
-        message.attachment = attached_file
-
+        # Enviar el correo
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
 
-        logging.info(f"Correo enviado: Status {response.status_code}")
+        logging.info(f"✅ Correo enviado. Status: {response.status_code}")
 
-    except Exception:
-        logging.exception("Error enviando correo con SendGrid")
+    except Exception as e:
+        logging.exception("❌ Error enviando correo con SendGrid")
