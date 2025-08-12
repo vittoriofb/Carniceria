@@ -1,7 +1,15 @@
 import logging
 import re
+from datetime import datetime, timedelta
+import locale
 from printer import send_to_printer
 from data import PRODUCTOS_DB
+
+# Intentar locale español para nombres de día/mes
+try:
+    locale.setlocale(locale.LC_TIME, "es_ES.UTF-8")
+except Exception:
+    pass
 
 SESSIONS = {}
 
@@ -14,6 +22,85 @@ def mostrar_carrito(session):
         for prod, cant in session["carrito"].items()
     ])
 
+def formatear_fecha(dt: datetime) -> str:
+    """Devuelve fecha en formato 'martes 13 de agosto - 15:00'."""
+    try:
+        return dt.strftime("%A %d de %B - %H:%M").capitalize()
+    except Exception:
+        # Fallback si no hay locale
+        meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
+        dias = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
+        return f"{dias[dt.weekday()]} {dt.day} de {meses[dt.month-1]} - {dt.strftime('%H:%M')}"
+
+def parse_dia_hora(texto: str) -> datetime:
+    """
+    Acepta:
+      - 'martes 15:00' (día de semana + hora)
+      - 'hoy 15:00', 'mañana 12:30'
+      - '13/08 15:00', '13-08 15:00', '13/08/2025 15:00'
+    Devuelve datetime en el futuro.
+    Lanza ValueError si no puede parsear o si es pasado.
+    """
+    s = texto.strip().lower()
+
+    # Normalizar separadores
+    s = re.sub(r"\s+", " ", s)
+
+    ahora = datetime.now()
+
+    # 1) hoy/mañana
+    m = re.match(r"^(hoy|mañana)\s+(\d{1,2}):([0-5]\d)$", s)
+    if m:
+        palabra, hh, mm = m.groups()
+        hh, mm = int(hh), int(mm)
+        fecha = ahora.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if palabra == "mañana":
+            fecha += timedelta(days=1)
+        # si es hoy y ya pasó, error (pedir futuro)
+        if fecha <= ahora:
+            raise ValueError("La hora debe ser futura.")
+        return fecha
+
+    # 2) día de la semana + hora
+    dias = {
+        "lunes": 0, "martes": 1, "miercoles": 2, "miércoles": 2,
+        "jueves": 3, "viernes": 4, "sabado": 5, "sábado": 5, "domingo": 6
+    }
+    m = re.match(r"^(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)\s+(\d{1,2}):([0-5]\d)$", s)
+    if m:
+        dia_txt, hh, mm = m.groups()
+        objetivo = dias[dia_txt]
+        hh, mm = int(hh), int(mm)
+
+        # Próxima ocurrencia de ese día
+        delta_dias = (objetivo - ahora.weekday()) % 7
+        fecha = ahora.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        fecha += timedelta(days=delta_dias)
+
+        # Si es hoy y ya pasó la hora, ir a la semana siguiente
+        if fecha <= ahora:
+            fecha += timedelta(days=7)
+        return fecha
+
+    # 3) fecha dd/mm(/yyyy)? + hora
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?\s+(\d{1,2}):([0-5]\d)$", s)
+    if m:
+        dd, mm, yyyy, hh = m.group(1), m.group(2), m.group(3), m.group(4)
+        min_str = m.group(5) if m.lastindex >= 5 else s[-2:]  # robustez
+        dd, mm, hh, min_ = int(dd), int(mm), int(hh), int(min_str)
+        year = int(yyyy) if yyyy else ahora.year
+
+        try:
+            fecha = datetime(year, mm, dd, hh, min_)
+        except ValueError:
+            raise ValueError("Fecha inválida. Usa formato válido (p. ej. 13/08 15:00).")
+
+        if fecha <= ahora:
+            raise ValueError("La fecha y hora deben ser futuras.")
+        return fecha
+
+    raise ValueError("Formato no reconocido.")
+
 def extraer_nombre(raw_text: str) -> str:
     """
     Extrae el nombre del usuario a partir de frases como:
@@ -21,7 +108,7 @@ def extraer_nombre(raw_text: str) -> str:
     - "me llamo María José"
     - "hola, soy Ana"
     - "Pablo"
-    Devuelve como máximo 3 palabras, sin emojis ni signos, capitalizadas.
+    Devuelve como máximo 3 palabras, sin signos, capitalizadas.
     """
     if not raw_text:
         return "Cliente"
@@ -29,7 +116,6 @@ def extraer_nombre(raw_text: str) -> str:
     txt = raw_text.strip()
     lower = txt.lower()
 
-    # Patrones comunes para presentar el nombre
     patrones = [
         r"(?:^|\b)(?:mi\s+nombre\s+es)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
         r"(?:^|\b)(?:me\s+llamo)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
@@ -37,40 +123,25 @@ def extraer_nombre(raw_text: str) -> str:
         r"(?:^|\b)hola[,!.\s]*soy\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
     ]
 
-    # Intentar extraer con patrones (usamos el texto en lower para encontrar posición)
     for patron in patrones:
         m = re.search(patron, lower)
         if m:
             start, end = m.span(1)
-            candidato = txt[start:end]  # recorta desde el texto original para conservar acentos
+            candidato = txt[start:end]
             break
     else:
-        # Si no coincide ningún patrón, asumimos que el primer token es el nombre
-        # (por ej: "Pablo", "María José", "Luis-Alberto")
-        # Limpiamos el principio de saludos frecuentes
         sin_saludo = re.sub(r"^(hola|buenas|buenos\s+días|buenas\s+tardes|buenas\s+noches)[,!\s]+", "", lower, flags=re.I)
         if sin_saludo != lower:
-            # Ajustamos índices al original
             offset = len(lower) - len(sin_saludo)
             txt = txt[offset:]
             lower = sin_saludo
-
-        # Tomar hasta 3 palabras como posible nombre
         m = re.match(r"([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})", lower)
-        if m:
-            start, end = m.span(1)
-            candidato = txt[start:end]
-        else:
-            candidato = txt
+        candidato = txt[m.start(1):m.end(1)] if m else txt
 
-    # Limpiar cualquier carácter que no sea letra, espacio o guion
     candidato = re.sub(r"[^a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-]", "", candidato)
-    # Normalizar espacios
     candidato = re.sub(r"\s+", " ", candidato).strip()
-    # Limitar a 3 palabras
     palabras = candidato.split()
     palabras = palabras[:3] if palabras else ["Cliente"]
-    # Capitalizar cada palabra
     nombre = " ".join(p.capitalize() for p in palabras)
     return nombre if nombre else "Cliente"
 
@@ -104,7 +175,8 @@ def process_message(data):
                 elif session["paso"] == 3:
                     session.pop("hora", None)
                     session["paso"] = 2
-                    return "Has vuelto atrás ↩️. Por favor, indícanos la hora en formato HH:MM (ej. 15:00)."
+                    return ("Has vuelto atrás ↩️. Por favor, indícanos *día y hora*.\n"
+                            "Ejemplos: 'martes 15:00', '13/08 15:00', 'mañana 12:30'.")
                 elif session["paso"] == 4:
                     session["paso"] = 3
                     return f"Has vuelto atrás ↩️. Lista actual:\n{mostrar_carrito(session)}\nDime si quieres añadir o quitar algo."
@@ -139,22 +211,31 @@ def process_message(data):
             if session["paso"] == 1:
                 session["nombre"] = extraer_nombre(raw_message)
                 session["paso"] = 2
-                return f"Encantado {session['nombre']} 😊. ¿A qué hora pasarás a recoger tu pedido? (Formato HH:MM, 24h)"
+                return ("Perfecto, {nombre} 😊. ¿Qué *día y hora* pasarás a recoger tu pedido?\n"
+                        "Ejemplos: 'martes 15:00', '13/08 15:00', 'mañana 12:30'."
+                        ).format(nombre=session["nombre"])
 
-            # Paso 2: Hora
+            # Paso 2: Día y hora
             if session["paso"] == 2:
-                if re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", msg):
-                    session["hora"] = msg
+                try:
+                    fecha = parse_dia_hora(msg)
+                    session["hora"] = fecha  # guardamos datetime completo
                     session["paso"] = 3
+
                     catalogo = "\n".join([f"- {prod} ({precio}€/kg)" for prod, precio in PRODUCTOS_DB.items()])
                     return (
-                        f"Perfecto. Estos son nuestros productos:\n{catalogo}\n\n"
+                        f"Perfecto. Programado para *{formatear_fecha(session['hora'])}*.\n\n"
+                        f"Estos son nuestros productos:\n{catalogo}\n\n"
                         "Dime qué quieres y cuántos kilos. Ejemplo: 'pollo 2 kg'.\n"
                         "Para eliminar un producto: 'eliminar pollo'.\n"
                         "Cuando termines, escribe 'listo'."
                     )
-                else:
-                    return "Formato de hora no válido. Ejemplo correcto: 15:00 (usa formato 24h)."
+                except ValueError as e:
+                    return (f"{str(e)}\n"
+                            "Por favor, indica *día y hora* con uno de estos formatos:\n"
+                            "• martes 15:00\n"
+                            "• 13/08 15:00\n"
+                            "• mañana 12:30")
 
             # Paso 3: Añadir o eliminar productos
             if session["paso"] == 3:
@@ -173,7 +254,10 @@ def process_message(data):
                     total = sum(cant * PRODUCTOS_DB[prod] for prod, cant in session["carrito"].items())
                     session["total"] = total
                     session["paso"] = 4
-                    return f"Este es tu pedido:\n{mostrar_carrito(session)}\n💰 Total: {total:.2f}€\nEscribe 'confirmar' para finalizar o 'cancelar' para anular."
+                    return (f"Este es tu pedido para *{formatear_fecha(session['hora'])}*:\n"
+                            f"{mostrar_carrito(session)}\n"
+                            f"💰 Total: {total:.2f}€\n"
+                            "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
                 match = re.match(r"([a-záéíóúñü ]+)\s+(\d+(?:\.\d+)?)\s*kg", msg)
                 if match:
@@ -193,7 +277,7 @@ def process_message(data):
                     resumen = (
                         f"✅ *Pedido confirmado*\n"
                         f"👤 Cliente: {session['nombre']}\n"
-                        f"🕒 Hora: {session['hora']}\n"
+                        f"🕒 Hora: {formatear_fecha(session['hora'])}\n"
                         f"🛒 Carrito:\n{mostrar_carrito(session)}\n"
                         f"💰 Total Estimado: {session['total']:.2f}€"
                     )
