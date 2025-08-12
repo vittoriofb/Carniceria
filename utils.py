@@ -210,7 +210,7 @@ def process_message(data):
         session = SESSIONS[user_id]
 
         # --- VOLVER ATRÁS ---
-        if "volver atras" in msg and session["modo"] == "pedido":
+        if ("volver atras" in msg or "volver atrás" in msg) and session["modo"] == "pedido":
             if session["paso"] > 1:
                 if session["paso"] == 2:
                     session.pop("nombre", None)
