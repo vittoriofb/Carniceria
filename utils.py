@@ -1,9 +1,15 @@
+# -*- coding: utf-8 -*-
 import logging
 import re
 from datetime import datetime, timedelta
 import locale
+
 from printer import send_to_printer
 from data import PRODUCTOS_DB
+
+# >>> NUEVO: utilidades de expresiones (no cambian la lógica, solo amplían la comprensión)
+from expresiones import normalizar_fecha_texto, extraer_productos_desde_texto
+# <<<
 
 # Intentar locale español para nombres de día/mes
 try:
@@ -85,6 +91,11 @@ def parse_dia_hora(texto: str):
     s = re.sub(r"\s+", " ", s)
     # normalizar 'próximo' a 'proximo' por si acaso
     s = s.replace("próximo", "proximo").replace("míercoles", "miércoles").replace("mediodia", "mediodía")
+
+    # >>> NUEVO: normalización coloquial (15h, 3pm, 'y media', etc.) antes de tus regex
+    s = normalizar_fecha_texto(s)
+    # <<<
+
     ahora = datetime.now()
 
     def _hhmm(hh, mm=None):
@@ -194,6 +205,9 @@ def extraer_nombre(raw_text: str) -> str:
         r"(?:^|\b)(?:me\s+llamo)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
         r"(?:^|\b)(?:soy)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
         r"(?:^|\b)hola[,!.\s]*soy\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
+        # >>> NUEVOS patrones suaves típicos
+        r"(?:^|\b)hola[,!.\s]*me\s+llamo\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
+        r"(?:^|\b)buenas[,!.\s]*soy\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
     ]
 
     for patron in patrones:
@@ -335,6 +349,18 @@ def process_message(data):
                             f"💰 Total: {total:.2f}€\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
+                # >>> NUEVO: detectar múltiples productos en un solo mensaje (y también gramajes, 'medio', etc.)
+                encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
+                if encontrados:
+                    for prod, cantidad in encontrados:
+                        if prod in PRODUCTOS_DB:
+                            session["carrito"][prod] = session["carrito"].get(prod, 0) + float(cantidad)
+                    if encontrados:
+                        añadido = ", ".join(f"{p} ({c} kg)" for p, c in encontrados)
+                        return f"{añadido} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
+                # <<<
+
+                # Tu patrón original (lo mantenemos tal cual)
                 match = re.match(r"([a-záéíóúñü ]+)\s+(\d+(?:\.\d+)?)\s*kg", msg)
                 if match:
                     producto = match.group(1).strip()
@@ -344,6 +370,15 @@ def process_message(data):
                         return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
                     else:
                         return "Ese producto no está en el catálogo."
+
+                # >>> NUEVO: último intento con un único producto flexible (p.ej. '750g de pollo', 'medio de lomo')
+                unico = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
+                if len(unico) == 1:
+                    producto, cantidad = unico[0]
+                    if producto in PRODUCTOS_DB:
+                        session["carrito"][producto] = session["carrito"].get(producto, 0) + float(cantidad)
+                        return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
+                # <<<
 
                 return "Formato no válido. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."
 
