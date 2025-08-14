@@ -133,4 +133,4 @@ def process_message(data):
 
     except Exception:
         logging.exception("Error en process_message")
-        return "Hubo un error interno procesando tu mensaje
+        return "Hubo un error interno procesando tu mensaje"
