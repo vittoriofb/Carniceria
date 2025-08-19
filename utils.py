@@ -2,7 +2,6 @@
 import logging
 import re
 from datetime import datetime, timedelta
-import locale
 
 from printer import send_to_printer
 from data import PRODUCTOS_DB
@@ -10,12 +9,6 @@ from data import PRODUCTOS_DB
 # >>> NUEVO: utilidades de expresiones (no cambian la lógica, solo amplían la comprensión)
 from expresiones import normalizar_fecha_texto, extraer_productos_desde_texto
 # <<<
-
-# Intentar locale español para nombres de día/mes
-try:
-    locale.setlocale(locale.LC_TIME, "es_ES.UTF-8")
-except Exception:
-    pass
 
 SESSIONS = {}
 
@@ -29,13 +22,16 @@ def mostrar_carrito(session):
     ])
 
 def formatear_fecha(dt):
-    """Devuelve fecha en formato 'martes 13 de agosto - 15:00' (fallback manual si no hay locale)."""
+    """Devuelve fecha en formato 'martes 13 de agosto - 15:00' (siempre en español)."""
+    meses = [
+        "enero","febrero","marzo","abril","mayo","junio",
+        "julio","agosto","septiembre","octubre","noviembre","diciembre"
+    ]
+    dias = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
     try:
-        return dt.strftime("%A %d de %B - %H:%M").capitalize()
-    except Exception:
-        meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
-        dias = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
         return f"{dias[dt.weekday()]} {dt.day} de {meses[dt.month-1]} - {dt.strftime('%H:%M')}"
+    except Exception:
+        return f"{dt.day:02d}/{dt.month:02d}/{dt.year} {dt.strftime('%H:%M')}"
 
 # Mapa de tramos del día a hora por defecto
 PERIODOS = {
@@ -106,7 +102,6 @@ def parse_dia_hora(texto: str):
         return h, m
 
     # 0) hoy/mañana/pasado mañana con tramo del día (sin hora explícita)
-    #    ej: "hoy por la tarde", "mañana por la mañana", "pasado mañana por la noche"
     m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
     if m:
         when, periodo = m.groups()
@@ -145,7 +140,6 @@ def parse_dia_hora(texto: str):
         return _proxima_semana(dias[dia_txt], hh, mm)
 
     # 2b) (este|proximo|el)? <dia_semana> (por la)? <periodo>
-    #     ej: "viernes por la tarde", "este miércoles por la mañana"
     m = re.match(
         r"^(?:este|proximo|el)?\s*(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)"
         r"(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s
@@ -177,7 +171,6 @@ def parse_dia_hora(texto: str):
         return _fecha_dia_mes(int(dia_mes), hh, mm)
 
     # 4b) el <día_mes> (por la)? <periodo>
-    #     ej: "el 20 por la tarde", "el 7 mañana"
     m = re.match(r"^el\s+(\d{1,2})(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
     if m:
         dia_mes, periodo = m.groups()
@@ -205,7 +198,6 @@ def extraer_nombre(raw_text: str) -> str:
         r"(?:^|\b)(?:me\s+llamo)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
         r"(?:^|\b)(?:soy)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
         r"(?:^|\b)hola[,!.\s]*soy\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
-        # >>> NUEVOS patrones suaves típicos
         r"(?:^|\b)hola[,!.\s]*me\s+llamo\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
         r"(?:^|\b)buenas[,!.\s]*soy\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
     ]
@@ -347,7 +339,7 @@ def process_message(data):
                             f"💰 Total Estimado: {total:.2f}€\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
-                # >>> NUEVO: detectar múltiples productos en un solo mensaje (y también gramajes, 'medio', etc.)
+                # >>> NUEVO: detectar múltiples productos en un solo mensaje
                 encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if encontrados:
                     for prod, cantidad in encontrados:
@@ -356,9 +348,8 @@ def process_message(data):
                     if encontrados:
                         añadido = ", ".join(f"{p} ({c} kg)" for p, c in encontrados)
                         return f"{añadido} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
-                # <<<
 
-                # Tu patrón original (lo mantenemos tal cual)
+                # Tu patrón original
                 match = re.match(r"([a-záéíóúñü ]+)\s+(\d+(?:\.\d+)?)\s*kg", msg)
                 if match:
                     producto = match.group(1).strip()
@@ -369,16 +360,15 @@ def process_message(data):
                     else:
                         return "Ese producto no está en el catálogo."
 
-                # >>> NUEVO: último intento con un único producto flexible (p.ej. '750g de pollo', 'medio de lomo')
+                # Último intento con producto único flexible
                 unico = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if len(unico) == 1:
                     producto, cantidad = unico[0]
                     if producto in PRODUCTOS_DB:
                         session["carrito"][producto] = session["carrito"].get(producto, 0) + float(cantidad)
                         return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
-                # <<<
 
-                return "Formato no válido UwU. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."
+                return "Formato no válido. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."
 
             # Paso 4: Confirmación
             if session["paso"] == 4:
