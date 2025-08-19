@@ -378,7 +378,7 @@ def process_message(data):
                         return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
                 # <<<
 
-                return "Formato no válido. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."
+                return "Formato no válido UwU. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."
 
             # Paso 4: Confirmación
             if session["paso"] == 4:
