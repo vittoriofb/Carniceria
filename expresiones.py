@@ -9,6 +9,10 @@ _Y_MEDIA_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+y\s+media\b", re.I)   # 
 _Y_CUARTO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+y\s+cuarto\b", re.I) # 2 y cuarto -> 2:15
 _MENOS_CUARTO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+menos\s+cuarto\b", re.I)  # 2 menos cuarto -> 1:45
 _PUNTO_RE = re.compile(r"\b(\d{1,2})\.(\d{2})\b")                             # 13.30 -> 13:30
+_HORA_SIMPLE_RE = re.compile(r"\b(\d{1,2})\s*(am|pm)\b", re.I)                # 3 pm -> 15:00
+_EN_PUNTO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+en\s+punto\b", re.I) # 5 en punto -> 5:00
+_MEDIODIA_RE = re.compile(r"\bmediod[ií]a\b", re.I)                           # mediodía -> 12:00
+_MEDIA_NOCHE_RE = re.compile(r"\bmedia\s+noche\b", re.I)                      # medianoche -> 00:00
 
 def _to_hhmm(h, m):
     h = max(0, min(23, int(h)))
@@ -59,6 +63,26 @@ def normalizar_fecha_texto(s: str) -> str:
         return _to_hhmm(h, mm)
     s = _AMPM_RE.sub(_ampm, s)
 
+    # 3 pm (sin minutos)
+    def _hora_simple(m):
+        h = int(m.group(1))
+        tag = m.group(2).lower()
+        if tag == "pm" and h < 12:
+            h += 12
+        if tag == "am" and h == 12:
+            h = 0
+        return _to_hhmm(h, 0)
+    s = _HORA_SIMPLE_RE.sub(_hora_simple, s)
+
+    # 5 en punto
+    s = _EN_PUNTO_RE.sub(lambda m: _to_hhmm(m.group(1), 0), s)
+
+    # mediodía -> 12:00
+    s = _MEDIODIA_RE.sub("12:00", s)
+
+    # medianoche -> 00:00
+    s = _MEDIA_NOCHE_RE.sub("00:00", s)
+
     # Rellenos habituales que no afectan al parseo
     s = re.sub(r"\b(sobre|tipo|para|hacia)\s+las\b", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -84,12 +108,14 @@ _FILLER_INICIO = re.compile(
     r"^(?:me\s+pones|ponme|pon|quisiera|quiero|querría|qerria|me\s+gustaría|"
     r"apúntame|apuntame|añade|anade|agrega|sumame|súmame|mete|encárgame|encargame|"
     r"para\s+llevar|para\s+hoy|para\s+mañana|para\s+manana|podrias|podrías|"
-    r"me\s+añades|me\s+agregas|me\s+metes)\s+", re.I
+    r"me\s+añades|me\s+agregas|me\s+metes|tráeme|traeme|sírveme|sirveme|"
+    r"dame|colócame|colocame|prepárame|preparame|resérvame|reservame|"
+    r"apártame|apartame|guárdame|guardame)\s+", re.I
 )
 
-_SEP = re.compile(r"\s*(?:,|;|\s+y\s+|\s+e\s+)\s*", re.I)
+_SEP = re.compile(r"\s*(?:,|;|\s+y\s+|\s+e\s+|\s+con\s+)\s*", re.I)
 
-# Segmento tipo: "2 kg de pollo" | "2kg pollo" | "pollo 2 kg" | "250g de chorizo" | "medio de lomo"
+# Segmentos de cantidad + producto
 _PAT_QTY_DE_PROD = re.compile(
     r"(?P<qty>(?:\d+(?:[.,]\d+)?|(?:1/2|1/4|3/4)|medio|media|cuarto|tres\s+cuartos))\s*"
     r"(?P<unit>kg|kilos?|kgs?|g|grs?|gramos?)?\s*(?:de\s+)?"
@@ -152,7 +178,7 @@ def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
 def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float]]:
     """
     Extrae [(producto, cantidad_kg), ...] desde un mensaje libre.
-    Acepta múltiples items separados por ',', ';', 'y', 'e'.
+    Acepta múltiples items separados por ',', ';', 'y', 'e', 'con'.
     """
     if not texto:
         return []
