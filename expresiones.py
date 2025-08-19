@@ -9,6 +9,9 @@ _Y_MEDIA_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+y\s+media\b", re.I)   # 
 _Y_CUARTO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+y\s+cuarto\b", re.I) # 2 y cuarto -> 2:15
 _MENOS_CUARTO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+menos\s+cuarto\b", re.I)  # 2 menos cuarto -> 1:45
 _PUNTO_RE = re.compile(r"\b(\d{1,2})\.(\d{2})\b")                             # 13.30 -> 13:30
+_MANANA_HH_RE = re.compile(r"\bmañana\s+(?:a\s+las\s+)?(\d{1,2})(?::(\d{2}))?\b", re.I)
+_MANANA_MEDIODIA_RE = re.compile(r"\bmañana\s+al\s+mediod[ií]a\b", re.I)
+
 
 # Nuevos patrones ampliados
 _COMA_RE = re.compile(r"\b(\d{1,2}),(\d{2})\b")                 # 13,30 -> 13:30
@@ -98,6 +101,13 @@ def normalizar_fecha_texto(s: str) -> str:
         h = 23 if h == 0 else h - 1
         return _to_hhmm(h, 45)
     s = _MENOS_CUARTO_RE.sub(_menos_cuarto, s)
+
+    # mañana a las 15 -> 15:00 mañana
+s = _MANANA_HH_RE.sub(lambda m: _to_hhmm(m.group(1), m.group(2) or 0) + " mañana", s)
+
+# mañana al mediodía -> 13:00 mañana
+s = _MANANA_MEDIODIA_RE.sub("13:00 mañana", s)
+
 
     # 3pm / 3 p.m. -> 15:00
     def _ampm(m):
