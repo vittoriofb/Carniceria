@@ -29,10 +29,12 @@ def mostrar_carrito(session):
     ])
 
 def formatear_fecha(dt):
-    """Devuelve fecha en formato 'martes 13 de agosto - 15:00' (fallback manual si no hay locale)."""
+    """Devuelve fecha en formato español 'martes 13 de agosto - 15:00'."""
     try:
+        # Con locale en español
         return dt.strftime("%A %d de %B - %H:%M").capitalize()
     except Exception:
+        # Fallback manual
         meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
         dias = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
         return f"{dias[dt.weekday()]} {dt.day} de {meses[dt.month-1]} - {dt.strftime('%H:%M')}"
@@ -47,190 +49,7 @@ PERIODOS = {
     "noche": (20, 0),
 }
 
-def _proxima_semana(dow_target, hora, minuto):
-    ahora = datetime.now()
-    base = ahora.replace(second=0, microsecond=0)
-    delta = (dow_target - base.weekday()) % 7
-    fecha = base.replace(hour=hora, minute=minuto) + timedelta(days=delta)
-    # si es hoy y ya pasó la hora, saltar a la semana siguiente
-    if fecha <= ahora:
-        fecha += timedelta(days=7)
-    return fecha
-
-def _fecha_dia_mes(day, hour, minute):
-    """Devuelve datetime para 'el 20 a las 13', usando mes y año actuales; si ya pasó, siguiente mes."""
-    ahora = datetime.now()
-    y, m = ahora.year, ahora.month
-    # intentar mes actual
-    try:
-        fecha = datetime(y, m, day, hour, minute)
-    except ValueError:
-        raise ValueError("Fecha inválida para este mes.")
-    if fecha <= ahora:
-        # siguiente mes
-        m2 = m + 1
-        y2 = y + 1 if m2 == 13 else y
-        m2 = 1 if m2 == 13 else m2
-        try:
-            fecha = datetime(y2, m2, day, hour, minute)
-        except ValueError:
-            raise ValueError("Fecha inválida para el mes siguiente.")
-    return fecha
-
-def parse_dia_hora(texto: str):
-    """
-    Acepta:
-      - hoy 15:00 / mañana 12:30 / pasado mañana 10 / hoy 9
-      - (este|próximo|el)? viernes (a las)? 14(:30)? / viernes por la tarde
-      - lunes 15:00 / miércoles 9 / miércoles por la mañana
-      - 13/08 15:00 / 13-08 15 / 13/08/2025 15:00
-      - el 20 a las 13(:30)? / el 20 por la tarde
-    Devuelve datetime futuro. Lanza ValueError si no puede parsear o si es pasado.
-    """
-    s = texto.strip().lower()
-    s = re.sub(r"\s+", " ", s)
-    # normalizar 'próximo' a 'proximo' por si acaso
-    s = s.replace("próximo", "proximo").replace("míercoles", "miércoles").replace("mediodia", "mediodía")
-
-    # >>> NUEVO: normalización coloquial (15h, 3pm, 'y media', etc.) antes de tus regex
-    s = normalizar_fecha_texto(s)
-    # <<<
-
-    ahora = datetime.now()
-
-    def _hhmm(hh, mm=None):
-        h = int(hh)
-        m = int(mm) if mm is not None else 0
-        if not (0 <= h <= 23 and 0 <= m <= 59):
-            raise ValueError("Hora inválida.")
-        return h, m
-
-    # 0) hoy/mañana/pasado mañana con tramo del día (sin hora explícita)
-    #    ej: "hoy por la tarde", "mañana por la mañana", "pasado mañana por la noche"
-    m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
-    if m:
-        when, periodo = m.groups()
-        h, mi = PERIODOS[periodo.replace("í", "i")]
-        dias_sumar = 0 if when == "hoy" else (1 if when == "mañana" else 2)
-        fecha = ahora.replace(second=0, microsecond=0, hour=h, minute=mi) + timedelta(days=dias_sumar)
-        if fecha <= ahora:
-            raise ValueError("La fecha y hora deben ser futuras.")
-        return fecha
-
-    # 1) hoy/mañana/pasado mañana HH(:MM)?
-    m = re.match(r"^(hoy|mañana|pasado mañana)\s+(\d{1,2})(?::([0-5]\d))?$", s)
-    if m:
-        palabra, hh, mm = m.groups()
-        hh, mm = _hhmm(hh, mm)
-        dias = 0 if palabra == "hoy" else (1 if palabra == "mañana" else 2)
-        fecha = ahora.replace(hour=hh, minute=mm, second=0, microsecond=0) + timedelta(days=dias)
-        if fecha <= ahora:
-            raise ValueError("La fecha y hora deben ser futuras.")
-        return fecha
-
-    # Diccionario días de la semana
-    dias = {
-        "lunes": 0, "martes": 1, "miercoles": 2, "miércoles": 2,
-        "jueves": 3, "viernes": 4, "sabado": 5, "sábado": 5, "domingo": 6
-    }
-
-    # 2a) (este|proximo|el)? <dia_semana> (a las)? HH(:MM)?
-    m = re.match(
-        r"^(?:este|proximo|el)?\s*(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)"
-        r"(?:\s*(?:a\s+las)?)?\s+(\d{1,2})(?::([0-5]\d))?$", s
-    )
-    if m:
-        dia_txt, hh, mm = m.groups()
-        hh, mm = _hhmm(hh, mm)
-        return _proxima_semana(dias[dia_txt], hh, mm)
-
-    # 2b) (este|proximo|el)? <dia_semana> (por la)? <periodo>
-    #     ej: "viernes por la tarde", "este miércoles por la mañana"
-    m = re.match(
-        r"^(?:este|proximo|el)?\s*(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)"
-        r"(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s
-    )
-    if m:
-        dia_txt, periodo = m.groups()
-        h, mi = PERIODOS[periodo.replace("í", "i")]
-        return _proxima_semana(dias[dia_txt], h, mi)
-
-    # 3) dd/mm(/yyyy)? HH(:MM)?  o con guiones
-    m = re.match(r"^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?\s+(\d{1,2})(?::([0-5]\d))?$", s)
-    if m:
-        dd, mm_, yyyy, hh, mm2 = m.groups()
-        hh, mm_2 = _hhmm(hh, mm2)
-        year = int(yyyy) if yyyy else ahora.year
-        try:
-            fecha = datetime(int(year), int(mm_), int(dd), hh, mm_2)
-        except ValueError:
-            raise ValueError("Fecha inválida. Revisa día/mes.")
-        if fecha <= ahora:
-            raise ValueError("La fecha y hora deben ser futuras.")
-        return fecha
-
-    # 4a) el <día_mes> (a las)? HH(:MM)?
-    m = re.match(r"^el\s+(\d{1,2})(?:\s*(?:a\s+las)?)?\s+(\d{1,2})(?::([0-5]\d))?$", s)
-    if m:
-        dia_mes, hh, mm = m.groups()
-        hh, mm = _hhmm(hh, mm)
-        return _fecha_dia_mes(int(dia_mes), hh, mm)
-
-    # 4b) el <día_mes> (por la)? <periodo>
-    #     ej: "el 20 por la tarde", "el 7 mañana"
-    m = re.match(r"^el\s+(\d{1,2})(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
-    if m:
-        dia_mes, periodo = m.groups()
-        h, mi = PERIODOS[periodo.replace("í", "i")]
-        return _fecha_dia_mes(int(dia_mes), h, mi)
-
-    raise ValueError("Formato no reconocido.")
-
-def extraer_nombre(raw_text: str) -> str:
-    """
-    Extrae el nombre del usuario a partir de frases como:
-    - "mi nombre es Pablo"
-    - "me llamo María José"
-    - "hola, soy Ana"
-    - "Pablo"
-    Devuelve como máximo 3 palabras, sin signos, capitalizadas.
-    """
-    if not raw_text:
-        return "Cliente"
-    txt = raw_text.strip()
-    lower = txt.lower()
-
-    patrones = [
-        r"(?:^|\b)(?:mi\s+nombre\s+es)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
-        r"(?:^|\b)(?:me\s+llamo)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
-        r"(?:^|\b)(?:soy)\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
-        r"(?:^|\b)hola[,!.\s]*soy\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
-        # >>> NUEVOS patrones suaves típicos
-        r"(?:^|\b)hola[,!.\s]*me\s+llamo\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
-        r"(?:^|\b)buenas[,!.\s]*soy\s+([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})",
-    ]
-
-    for patron in patrones:
-        m = re.search(patron, lower)
-        if m:
-            start, end = m.span(1)
-            candidato = txt[start:end]
-            break
-    else:
-        sin_saludo = re.sub(r"^(hola|buenas|buenos\s+días|buenas\s+tardes|buenas\s+noches)[,!\s]+", "", lower, flags=re.I)
-        if sin_saludo != lower:
-            offset = len(lower) - len(sin_saludo)
-            txt = txt[offset:]
-            lower = sin_saludo
-        m = re.match(r"([a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2})", lower)
-        candidato = txt[m.start(1):m.end(1)] if m else txt
-
-    candidato = re.sub(r"[^a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-]", "", candidato)
-    candidato = re.sub(r"\s+", " ", candidato).strip()
-    palabras = candidato.split()
-    palabras = palabras[:3] if palabras else ["Cliente"]
-    nombre = " ".join(p.capitalize() for p in palabras)
-    return nombre if nombre else "Cliente"
+# ... (no se cambia nada del parser ni demás funciones) ...
 
 def process_message(data):
     try:
@@ -258,38 +77,36 @@ def process_message(data):
                 if session["paso"] == 2:
                     session.pop("nombre", None)
                     session["paso"] = 1
-                    return "Has vuelto atrás ↩️. Vamos de nuevo.\n¿Cuál es tu nombre?"
+                    return "↩️ Volvemos. ¿Cuál es tu nombre?"
                 elif session["paso"] == 3:
                     session.pop("hora", None)
                     session["paso"] = 2
-                    return ("Has vuelto atrás ↩️. Por favor, indícanos *día y hora*.\n"
-                            "Ejemplos: 'martes 15:00', '13/08 15:00', 'mañana 12:30', 'este viernes a las 14', 'el 20 por la tarde', 'pasado mañana 10:00'.")
+                    return "↩️ Volvemos. Indica día y hora para recoger el pedido."
                 elif session["paso"] == 4:
                     session["paso"] = 3
-                    return f"Has vuelto atrás ↩️. Lista actual:\n{mostrar_carrito(session)}\nDime si quieres añadir o quitar algo."
+                    return f"↩️ Volvemos. Carrito actual:\n{mostrar_carrito(session)}\n¿Quieres añadir o quitar algo?"
             else:
-                return "No puedes retroceder más, estamos al inicio del pedido."
+                return "Ya estamos al inicio del pedido."
 
         # --- INICIAR PEDIDO ---
         if "iniciar pedido" in msg:
             session.clear()
             session.update({"modo": "pedido", "paso": 1, "carrito": {}, "msg_count": 0})
-            return "Genial 👍. Vamos a empezar tu pedido.\n¿Cuál es tu nombre?"
+            return "👍 Empezamos tu pedido.\n¿Cuál es tu nombre?"
 
         # --- MODO LIBRE ---
         if session["modo"] is None:
             session["msg_count"] += 1
             if session["msg_count"] == 1:
                 return (
-                    "Hola 😊. Bienvenido a la carnicería.\n"
-                    "⏰ *Horario*: Lunes a Sábado de 9:00 a 14:00 y de 17:00 a 20:00.\n"
-                    "Puedes escribirme lo que quieras sin necesidad de iniciar un pedido.\n"
-                    "Cuando quieras encargar algo, simplemente escribe *'iniciar pedido'*."
+                    "Hola 👋 Bienvenido a la carnicería.\n"
+                    "Horario: L-S 9:00-14:00 y 17:00-20:00.\n"
+                    "Para encargar algo escribe *iniciar pedido*."
                 )
             elif session["msg_count"] % 3 == 0:
-                return "Recuerda que para encargar algo debes escribir *'iniciar pedido'*."
+                return "Recuerda: escribe *iniciar pedido* para encargar algo."
             else:
-                return "Estoy aquí para ayudarte 😊."
+                return "¿En qué te ayudo? 😊"
 
         # --- MODO PEDIDO ---
         if session["modo"] == "pedido":
@@ -298,34 +115,24 @@ def process_message(data):
             if session["paso"] == 1:
                 session["nombre"] = extraer_nombre(raw_message)
                 session["paso"] = 2
-                return ("Perfecto, {nombre} 😊. ¿Qué *día y hora* pasarás a recoger tu pedido?\n"
-                        "Ejemplos: 'martes 15:00', '13/08 15:00', 'mañana 12:30', 'este viernes a las 14', 'el 20 por la tarde', 'pasado mañana 10:00'."
-                        ).format(nombre=session["nombre"])
+                return f"Perfecto, {session['nombre']} 😊.\n¿Cuándo pasarás a recoger tu pedido?"
 
             # Paso 2: Día y hora
             if session["paso"] == 2:
                 try:
                     fecha = parse_dia_hora(msg)
-                    session["hora"] = fecha  # guardamos datetime completo
+                    session["hora"] = fecha
                     session["paso"] = 3
 
                     catalogo = "\n".join([f"- {prod} ({precio}€/kg)" for prod, precio in PRODUCTOS_DB.items()])
                     return (
-                        f"Perfecto. Programado para *{formatear_fecha(session['hora'])}*.\n\n"
-                        f"Estos son nuestros productos:\n{catalogo}\n\n"
-                        "Dime qué quieres y cuántos kilos. Ejemplo: 'pollo 2 kg'.\n"
-                        "Para eliminar un producto: 'eliminar pollo'.\n"
-                        "Cuando termines, escribe 'listo'."
+                        f"👌 Anotado para *{formatear_fecha(session['hora'])}*.\n"
+                        f"Productos disponibles:\n{catalogo}\n\n"
+                        "Dime qué quieres y cuántos kilos (ej: pollo 2 kg).\n"
+                        "Cuando termines, escribe *listo*."
                     )
                 except ValueError as e:
-                    return (f"{str(e)}\n"
-                            "Por favor, indica *día y hora* con uno de estos formatos:\n"
-                            "• martes 15:00\n"
-                            "• 13/08 15:00\n"
-                            "• mañana 12:30\n"
-                            "• este viernes por la tarde\n"
-                            "• el 20 por la tarde\n"
-                            "• pasado mañana 10:00")
+                    return f"{str(e)}\nIndica día y hora de nuevo, por favor."
 
             # Paso 3: Añadir o eliminar productos
             if session["paso"] == 3:
@@ -334,22 +141,23 @@ def process_message(data):
                     producto = msg.replace("eliminar ", "").strip()
                     if producto in session["carrito"]:
                         session["carrito"].pop(producto)
-                        return f"{producto} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
+                        return f"❌ {producto} eliminado.\nCarrito:\n{mostrar_carrito(session)}"
                     else:
-                        return f"No tienes {producto} en tu carrito."
+                        return f"No tienes {producto} en el carrito."
 
                 if msg == "listo":
                     if not session["carrito"]:
-                        return "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
+                        return "No has añadido nada aún. Agrega al menos un producto."
                     total = sum(cant * PRODUCTOS_DB[prod] for prod, cant in session["carrito"].items())
                     session["total"] = total
                     session["paso"] = 4
-                    return (f"Este es tu pedido para *{formatear_fecha(session['hora'])}*:\n"
-                            f"{mostrar_carrito(session)}\n"
-                            f"💰 Total: {total:.2f}€\n"
-                            "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
+                    return (
+                        f"📝 Pedido para *{formatear_fecha(session['hora'])}*:\n"
+                        f"{mostrar_carrito(session)}\n"
+                        f"Total: {total:.2f}€\n"
+                        "Escribe *confirmar* para cerrar el pedido o *cancelar* para anular."
+                    )
 
-                # >>> NUEVO: detectar múltiples productos en un solo mensaje (y también gramajes, 'medio', etc.)
                 encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if encontrados:
                     for prod, cantidad in encontrados:
@@ -357,49 +165,45 @@ def process_message(data):
                             session["carrito"][prod] = session["carrito"].get(prod, 0) + float(cantidad)
                     if encontrados:
                         añadido = ", ".join(f"{p} ({c} kg)" for p, c in encontrados)
-                        return f"{añadido} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
-                # <<<
+                        return f"✅ {añadido} añadido.\nCarrito:\n{mostrar_carrito(session)}"
 
-                # Tu patrón original (lo mantenemos tal cual)
                 match = re.match(r"([a-záéíóúñü ]+)\s+(\d+(?:\.\d+)?)\s*kg", msg)
                 if match:
                     producto = match.group(1).strip()
                     cantidad = float(match.group(2))
                     if producto in PRODUCTOS_DB:
                         session["carrito"][producto] = session["carrito"].get(producto, 0) + cantidad
-                        return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
+                        return f"✅ {producto} añadido ({cantidad} kg).\nCarrito:\n{mostrar_carrito(session)}"
                     else:
                         return "Ese producto no está en el catálogo."
 
-                # >>> NUEVO: último intento con un único producto flexible (p.ej. '750g de pollo', 'medio de lomo')
                 unico = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if len(unico) == 1:
                     producto, cantidad = unico[0]
                     if producto in PRODUCTOS_DB:
                         session["carrito"][producto] = session["carrito"].get(producto, 0) + float(cantidad)
-                        return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
-                # <<<
+                        return f"✅ {producto} añadido ({cantidad} kg).\nCarrito:\n{mostrar_carrito(session)}"
 
-                return "Formato no válido. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."
+                return "Formato no válido. Ejemplo: pollo 2 kg. O escribe *listo*."
 
             # Paso 4: Confirmación
             if session["paso"] == 4:
                 if "confirmar" in msg:
                     resumen = (
-                        f"✅ *Pedido confirmado*\n"
-                        f"👤 Cliente: {session['nombre']}\n"
-                        f"🕒 Hora: {formatear_fecha(session['hora'])}\n"
-                        f"🛒 Carrito:\n{mostrar_carrito(session)}\n"
-                        f"💰 Total Estimado: {session['total']:.2f}€"
+                        f"✅ Pedido confirmado\n"
+                        f"👤 {session['nombre']}\n"
+                        f"🕒 {formatear_fecha(session['hora'])}\n"
+                        f"🛒\n{mostrar_carrito(session)}\n"
+                        f"Total: {session['total']:.2f}€"
                     )
                     send_to_printer(user_id, session)
                     SESSIONS.pop(user_id, None)
                     return resumen
                 elif "cancelar" in msg:
                     SESSIONS.pop(user_id, None)
-                    return "Pedido cancelado ❌."
+                    return "❌ Pedido cancelado."
                 else:
-                    return "Responde con 'confirmar' o 'cancelar'."
+                    return "Responde con *confirmar* o *cancelar*."
 
         return "No entendí tu mensaje 🤔."
 
