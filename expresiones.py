@@ -10,6 +10,23 @@ _Y_CUARTO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+y\s+cuarto\b", re.I) # 
 _MENOS_CUARTO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+menos\s+cuarto\b", re.I)  # 2 menos cuarto -> 1:45
 _PUNTO_RE = re.compile(r"\b(\d{1,2})\.(\d{2})\b")                             # 13.30 -> 13:30
 
+# Nuevos patrones ampliados
+_COMA_RE = re.compile(r"\b(\d{1,2}),(\d{2})\b")                 # 13,30 -> 13:30
+_HHMM4_RE = re.compile(r"\b(\d{1,2})(\d{2})\b")                 # 1530 -> 15:30 (cauto)
+_ALAS_RE = re.compile(r"\b(?:a\s+las|las)\s+(\d{1,2})(?![:\d])\b", re.I) # a las 7 -> 7:00
+_EN_PUNTO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+en\s+punto\b", re.I)
+_Y_MINUTOS_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+y\s+(cinco|diez|veinte|veinticinco|treinta)\b", re.I)
+_MENOS_MINUTOS_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+menos\s+(cinco|diez|veinte|veinticinco)\b", re.I)
+_Y_PICO_RE = re.compile(r"\b(?:a\s+las\s+)?(\d{1,2})\s+y\s+pico\b", re.I)
+_MEDIODIA_RE = re.compile(r"\b(al\s+)?mediod[ií]a\b", re.I)
+_MEDIANOCHE_RE = re.compile(r"\b(a\s+)?medianoche\b", re.I)
+_PRIMERA_HORA_RE = re.compile(r"\b(a\s+)?primera\s+hora\b", re.I)
+_MEDIA_MAÑANA_RE = re.compile(r"\b(a\s+|por\s+la\s+|de\s+)?media\s+ma(?:ñ|n)ana\b", re.I)
+_TARDE_NOCHE_RE = re.compile(r"\btarde\s*[-/]\s*noche\b", re.I)
+_POR_LA_MAÑANA_RE = re.compile(r"\bpor\s+la\s+ma(?:ñ|n)ana\b", re.I)
+_POR_LA_TARDE_RE = re.compile(r"\bpor\s+la\s+tarde\b", re.I)
+_POR_LA_NOCHE_RE = re.compile(r"\bpor\s+la\s+noche\b", re.I)
+
 def _to_hhmm(h, m):
     h = max(0, min(23, int(h)))
     m = max(0, min(59, int(m)))
@@ -33,6 +50,41 @@ def normalizar_fecha_texto(s: str) -> str:
 
     # 13.30 -> 13:30
     s = _PUNTO_RE.sub(lambda m: _to_hhmm(m.group(1), m.group(2)), s)
+    # 13,30 -> 13:30
+    s = _COMA_RE.sub(lambda m: _to_hhmm(m.group(1), m.group(2)), s)
+
+    # 1530 -> 15:30 (si parece una hora pegada y no forma parte de un número más largo)
+    s = re.sub(r"(?<!\d)(\d{1,2})(\d{2})(?!\d)", lambda m: _to_hhmm(m.group(1), m.group(2)), s)
+
+    # 'a las 7' / 'las 7' -> '7:00'
+    s = _ALAS_RE.sub(lambda m: _to_hhmm(m.group(1), 0), s)
+
+    # 'en punto' -> :00
+    s = _EN_PUNTO_RE.sub(lambda m: _to_hhmm(m.group(1), 0), s)
+
+    # 'y cinco/diez/veinte/veinticinco/treinta'
+    _map_min = {'cinco':5,'diez':10,'veinte':20,'veinticinco':25,'treinta':30}
+    s = _Y_MINUTOS_RE.sub(lambda m: _to_hhmm(m.group(1), _map_min[m.group(2).lower()]), s)
+
+    # 'menos cinco/diez/veinte/veinticinco'
+    _map_men = {'cinco':55,'diez':50,'veinte':40,'veinticinco':35}
+    def _menos(m):
+        h = (int(m.group(1)) - 1) % 24
+        return _to_hhmm(h, _map_men[m.group(2).lower()])
+    s = _MENOS_MINUTOS_RE.sub(_menos, s)
+
+    # 'y pico' ~ +5
+    s = _Y_PICO_RE.sub(lambda m: _to_hhmm(m.group(1), 5), s)
+
+    # Términos comunes de tramos del día a una hora concreta que tu bot entiende
+    s = _MEDIODIA_RE.sub("13:00", s)
+    s = _MEDIANOCHE_RE.sub("00:00", s)
+    s = _PRIMERA_HORA_RE.sub("mañana", s)  # lo resolverá PERIODOS->(9:00)
+    s = _MEDIA_MAÑANA_RE.sub("mañana", s)
+    s = _TARDE_NOCHE_RE.sub("tarde", s)    # elegir tramo 'tarde' por defecto
+    s = _POR_LA_MAÑANA_RE.sub("mañana", s)
+    s = _POR_LA_TARDE_RE.sub("tarde", s)
+    s = _POR_LA_NOCHE_RE.sub("noche", s)
 
     # 2 y media -> 2:30
     s = _Y_MEDIA_RE.sub(lambda m: _to_hhmm(m.group(1), 30), s)
@@ -78,9 +130,8 @@ _NUM_TXT = {
     "cuarto": 0.25, "tres cuartos": 0.75,
 }
 
-
-_UNIDADES_KG = ("kg", "k", "kilo", "kilos", "kgs", "kg.")
-_UNIDADES_G  = ("g", "gr", "grs", "gramo", "gramos")
+_UNIDADES_KG = ("kg", "k", "kilo", "kilos", "kgs", "kg.", "kilogramo", "kilogramos", "kgr", "kgm")
+_UNIDADES_G  = ("g", "gr", "grs", "gramo", "gramos", "g.", "gr.")
 
 # Filler words típicos delante del pedido
 _FILLER_INICIO = re.compile(
@@ -90,11 +141,12 @@ _FILLER_INICIO = re.compile(
     r"me\s+añades|me\s+agregas|me\s+metes|"
     r"dame|traeme|tráeme|pásame|pasame|"
     r"quiero\s+pedir|voy\s+a\s+querer|me\s+vas\s+a\s+dar|me\s+sirves|"
-    r"echame|échame|apártame|apartame)\s+", re.I
+    r"echame|échame|apártame|apartame|reservame|resérvame|reserva|"
+    r"me\s+traes|traete|si\s+puedes|por\s+favor|porfa|porfis|"
+    r"quisiera\s+encargar|quiero\s+encargar|me\s+encargas)\s+", re.I
 )
 
-
-_SEP = re.compile(r"\s*(?:,|;|\s+y\s+|\s+e\s+)\s*", re.I)
+_SEP = re.compile(r"\s*(?:,|;|\+|/|\s+y\s+|\s+e\s+)\s*", re.I)
 
 # Segmento tipo: "2 kg de pollo" | "2kg pollo" | "pollo 2 kg" | "250g de chorizo" | "medio de lomo"
 _PAT_QTY_DE_PROD = re.compile(
@@ -106,7 +158,14 @@ _PAT_QTY_DE_PROD = re.compile(
 _PAT_PROD_QTY = re.compile(
     r"(?P<prod>[a-záéíóúñü\s\-]+?)\s*"
     r"(?P<qty>(?:\d+(?:[.,]\d+)?|(?:1/2|1/4|3/4)|medio|media|cuarto|tres\s+cuartos))\s*"
-    r"(?P<unit>kg|kilos?|kgs?|g|grs?|gramos?)$",
+    r"(?P<unit>kg|kilos?|kgs?|g|grs?|gramos?)?$",
+    re.I
+)
+_PAT_NUM_TXT = re.compile(
+    r"(?P<num>(?:un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|"
+    r"once|doce|docena|trece|catorce|quince|veinte|medio|media|cuarto|tres\s+cuartos))\s*"
+    r"(?P<unit>kg|kilos?|kgs?|g|grs?|gramos?)?\s*(?:de\s+)?"
+    r"(?P<prod>[a-záéíóúñü\s\-]+)$",
     re.I
 )
 
@@ -127,9 +186,9 @@ def _parse_qty(qty_raw: str, unit_raw: str | None) -> float:
         try:
             qty = float(q)
         except ValueError:
-            return 0.0
+            qty = 0.0
 
-    unit = (unit_raw or "").strip().lower()
+    unit = (unit_raw or "").lower().strip()
     if unit in _UNIDADES_G:
         qty = qty / 1000.0  # pasar a kg
     # si no hay unidad o es kg, ya está en kg
@@ -166,6 +225,17 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
     keys = productos_db.keys() if hasattr(productos_db, "keys") else list(productos_db)
     raw = texto.strip().lower()
 
+    # Normalización previa de cantidades coloquiales
+    reemplazos_qty = [
+        (r"\bmedio\s+kilo\b", "0.5 kg"),
+        (r"\b(kilo|kg)\s+y\s+medio\b", "1.5 kg"),
+        (r"\b(kilo|kg)\s+y\s+cuarto\b", "1.25 kg"),
+        (r"\b(kilo|kg)\s+y\s+tres\s+cuartos\b", "1.75 kg"),
+        (r"\bcuarto\s+y\s+mitad\b", "0.375 kg"),
+    ]
+    for pat, rep in reemplazos_qty:
+        raw = re.sub(pat, rep, raw)
+
     # Trocear en segmentos
     segmentos = _SEP.split(raw)
     items: list[tuple[str, float]] = []
@@ -173,9 +243,11 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
     for seg in segmentos:
         if not seg:
             continue
+
+        # Ignorar fillers al inicio del segmento
         seg = _FILLER_INICIO.sub("", seg).strip()
 
-        # Intento 1: "2 kg de pollo" / "250g chorizo" / "medio de lomo"
+        # Intento 1: qty + [unit] + de + prod
         m = _PAT_QTY_DE_PROD.match(seg)
         if m:
             qty = _parse_qty(m.group("qty"), m.group("unit"))
@@ -184,7 +256,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                 items.append((prod, qty))
             continue
 
-        # Intento 2: "pollo 2 kg"
+        # Intento 2: prod + qty [+ unit]
         m = _PAT_PROD_QTY.match(seg)
         if m:
             qty = _parse_qty(m.group("qty"), m.group("unit"))
@@ -193,12 +265,10 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                 items.append((prod, qty))
             continue
 
-        # Intento 3: "un kilo de pollo", "dos kilos de ternera"
-        m = re.match(
-            r"(?P<num>(?:un(?:a)?|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|medio|media|cuarto|tres\s+cuartos))\s+"
-            r"(?:kilo|kilos|kg)\s*(?:de\s+)?(?P<prod>[a-záéíóúñü\s\-]+)$", seg, re.I)
+        # Intento 3: num_txt + [unit] + de + prod
+        m = _PAT_NUM_TXT.match(seg)
         if m:
-            qty = _parse_qty(m.group("num"), "kg")
+            qty = _parse_qty(m.group("num"), m.group("unit"))
             prod = _canonicalizar_producto(m.group("prod"), keys)
             if prod and qty > 0:
                 items.append((prod, qty))
