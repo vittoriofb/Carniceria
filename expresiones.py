@@ -72,9 +72,12 @@ _NUM_TXT = {
     "un": 1, "una": 1, "uno": 1,
     "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
     "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10,
+    "once": 11, "doce": 12, "docena": 12,
+    "trece": 13, "catorce": 14, "quince": 15, "veinte": 20,
     "medio": 0.5, "media": 0.5,
     "cuarto": 0.25, "tres cuartos": 0.75,
 }
+
 
 _UNIDADES_KG = ("kg", "k", "kilo", "kilos", "kgs", "kg.")
 _UNIDADES_G  = ("g", "gr", "grs", "gramo", "gramos")
@@ -84,8 +87,12 @@ _FILLER_INICIO = re.compile(
     r"^(?:me\s+pones|ponme|pon|quisiera|quiero|querría|qerria|me\s+gustaría|"
     r"apúntame|apuntame|añade|anade|agrega|sumame|súmame|mete|encárgame|encargame|"
     r"para\s+llevar|para\s+hoy|para\s+mañana|para\s+manana|podrias|podrías|"
-    r"me\s+añades|me\s+agregas|me\s+metes)\s+", re.I
+    r"me\s+añades|me\s+agregas|me\s+metes|"
+    r"dame|traeme|tráeme|pásame|pasame|"
+    r"quiero\s+pedir|voy\s+a\s+querer|me\s+vas\s+a\s+dar|me\s+sirves|"
+    r"echame|échame|apártame|apartame)\s+", re.I
 )
+
 
 _SEP = re.compile(r"\s*(?:,|;|\s+y\s+|\s+e\s+)\s*", re.I)
 
