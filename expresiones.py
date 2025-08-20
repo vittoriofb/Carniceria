@@ -180,6 +180,14 @@ _PAT_PROD_QTY = re.compile(
     r"(?P<unit>kg|kilos?|kgs?|g|grs?|gramos?)?$",
     re.I
 )
+
+# Nuevo: detectar unidades tipo "2 hamburguesas", "1 paella"
+_PAT_UNIDADES_PIEZAS = re.compile(
+    r"(?P<num>\d+|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
+    r"(?P<prod>[a-záéíóúñü\s\-]+?)(?:s)?$", re.I
+)
+
+
 _PAT_NUM_TXT = re.compile(
     r"(?P<num>(?:un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|"
     r"once|doce|docena|trece|catorce|quince|veinte|medio|media|cuarto|tres\s+cuartos))\s*"
@@ -292,6 +300,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             if prod and qty > 0:
                 items.append((prod, qty))
             continue
+        
 
         # Intento 4: "pollo medio" (asumir kg)
         m = re.match(
@@ -299,6 +308,17 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             seg, re.I)
         if m:
             qty = _parse_qty(m.group("num"), "kg")
+            prod = _canonicalizar_producto(m.group("prod"), keys)
+            if prod and qty > 0:
+                items.append((prod, qty))
+            continue
+
+        
+        # Intento 5: unidades sueltas ("2 hamburguesas", "1 paella")
+        m = _PAT_UNIDADES_PIEZAS.match(seg)
+        if m:
+            num_raw = m.group("num").lower()
+            qty = float(_NUM_TXT.get(num_raw, num_raw)) if num_raw in _NUM_TXT else float(num_raw)
             prod = _canonicalizar_producto(m.group("prod"), keys)
             if prod and qty > 0:
                 items.append((prod, qty))

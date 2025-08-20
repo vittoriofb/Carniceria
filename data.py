@@ -1,13 +1,17 @@
 # data.py
 import pandas as pd
 
-def cargar_productos(ruta_excel: str = "productos_aranda.xlsx") -> list[str]:
+def cargar_productos(ruta_excel: str = "productos_aranda.xlsx") -> dict[str, str]:
     """
-    Carga solo los nombres de los productos desde un Excel con columna 'Nombre'
+    Carga los productos y sus categorías desde un Excel con columnas 'Nombre' y 'Categorias'
+    Devuelve: {"pollo": "aves", "paella": "otro", ...}
     """
     df = pd.read_excel(ruta_excel)
-    # Convertir a lista normal, todo en minúsculas y limpio
-    productos = df["Nombre"].str.lower().str.strip().tolist()
+
+    productos = {
+        str(row["Nombre"]).lower().strip(): str(row["Categorías"]).lower().strip()
+        for _, row in df.iterrows()
+    }
     return productos
 
 # Para uso directo

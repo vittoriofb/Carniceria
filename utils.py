@@ -336,6 +336,18 @@ def process_message(data):
             # Paso 3: Añadir o eliminar productos
             if session["paso"] == 3:
 
+                categoria = PRODUCTOS_DB[prod]
+
+                if categoria == "otro":
+                    # Solo permitir unidades
+                    if cantidad != 1.0:
+                        return f"⚠️ {prod} se pide como plato entero, no por kilos."
+                    session["carrito"][prod] = session["carrito"].get(prod, 0) + 1
+                else:
+                    # Carne/aves → se pide por kg
+                    session["carrito"][prod] = session["carrito"].get(prod, 0) + cantidad
+
+
                 if msg.startswith("eliminar "):
                     producto = msg.replace("eliminar ", "").strip()
                     if producto in session["carrito"]:
@@ -382,7 +394,7 @@ def process_message(data):
                         session["carrito"][producto] = session["carrito"].get(producto, 0) + float(cantidad)
                         return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
 
-                return "Formato no válido. Ejemplo: 'pollo 2 kg'. O escribe 'listo' si has terminado."
+                return "Formato no válido. Ejemplo: '2 kilos de pollo'. O escribe 'listo' si has terminado."
 
             # Paso 4: Confirmación
             if session["paso"] == 4:
