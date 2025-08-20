@@ -1,9 +1,16 @@
 # data.py
-PRODUCTOS_DB = {
-    "pollo": 6.50,
-    "ternera": 12.00,
-    "cerdo": 8.00,
-    "cordero": 13.50,
-    "conejo": 7.50,
-    "costilla": 8.00
-}
+import pandas as pd
+
+def cargar_productos(ruta_excel: str = "productos.xlsx") -> dict[str, float]:
+    """
+    Carga los productos desde un Excel en formato:
+    | Producto | Precio |
+    """
+    df = pd.read_excel(ruta_excel)
+
+    # Normalizamos nombres en minúsculas
+    productos = dict(zip(df["Producto"].str.lower().str.strip(), df["Precio"]))
+    return productos
+
+# Para uso directo
+PRODUCTOS_DB = cargar_productos()
