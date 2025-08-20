@@ -77,6 +77,7 @@ def parse_dia_hora(texto: str):
     """
     Acepta:
       - hoy 15:00 / mañana 12:30 / pasado mañana 10 / hoy 9
+      - hoy a las 15 / mañana a las 12:00 / pasado mañana al mediodía
       - (este|próximo|el)? viernes (a las)? 14(:30)? / viernes por la tarde
       - lunes 15:00 / miércoles 9 / miércoles por la mañana
       - 13/08 15:00 / 13-08 15 / 13/08/2025 15:00
@@ -88,7 +89,7 @@ def parse_dia_hora(texto: str):
     # normalizar 'próximo' a 'proximo' por si acaso
     s = s.replace("próximo", "proximo").replace("míercoles", "miércoles").replace("mediodia", "mediodía")
 
-    # >>> NUEVO: normalización coloquial (15h, 3pm, 'y media', etc.) antes de tus regex
+    # >>> normalización coloquial (15h, 3pm, 'y media', etc.)
     s = normalizar_fecha_texto(s)
     # <<<
 
@@ -101,8 +102,8 @@ def parse_dia_hora(texto: str):
             raise ValueError("Hora inválida.")
         return h, m
 
-    # 0) hoy/mañana/pasado mañana con tramo del día (sin hora explícita)
-    m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
+    # 0) hoy/mañana/pasado mañana con tramo del día (mañana, tarde, noche, mediodía)
+    m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+(?:por\s+la|al))?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
     if m:
         when, periodo = m.groups()
         h, mi = PERIODOS[periodo.replace("í", "i")]
@@ -112,8 +113,8 @@ def parse_dia_hora(texto: str):
             raise ValueError("La fecha y hora deben ser futuras.")
         return fecha
 
-    # 1) hoy/mañana/pasado mañana HH(:MM)?
-    m = re.match(r"^(hoy|mañana|pasado mañana)\s+(\d{1,2})(?::([0-5]\d))?$", s)
+    # 1) hoy/mañana/pasado mañana (a las)? HH(:MM)?
+    m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+(?:a\s+las)?)?\s+(\d{1,2})(?::([0-5]\d))?$", s)
     if m:
         palabra, hh, mm = m.groups()
         hh, mm = _hhmm(hh, mm)
@@ -139,10 +140,10 @@ def parse_dia_hora(texto: str):
         hh, mm = _hhmm(hh, mm)
         return _proxima_semana(dias[dia_txt], hh, mm)
 
-    # 2b) (este|proximo|el)? <dia_semana> (por la)? <periodo>
+    # 2b) (este|proximo|el)? <dia_semana> (por la|al)? <periodo>
     m = re.match(
         r"^(?:este|proximo|el)?\s*(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)"
-        r"(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s
+        r"(?:\s+(?:por\s+la|al))?\s+(mañana|tarde|noche|mediod[ií]a)$", s
     )
     if m:
         dia_txt, periodo = m.groups()
@@ -170,14 +171,15 @@ def parse_dia_hora(texto: str):
         hh, mm = _hhmm(hh, mm)
         return _fecha_dia_mes(int(dia_mes), hh, mm)
 
-    # 4b) el <día_mes> (por la)? <periodo>
-    m = re.match(r"^el\s+(\d{1,2})(?:\s+por\s+la)?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
+    # 4b) el <día_mes> (por la|al)? <periodo>
+    m = re.match(r"^el\s+(\d{1,2})(?:\s+(?:por\s+la|al))?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
     if m:
         dia_mes, periodo = m.groups()
         h, mi = PERIODOS[periodo.replace("í", "i")]
         return _fecha_dia_mes(int(dia_mes), h, mi)
 
     raise ValueError("Formato no reconocido.")
+
 
     
 
