@@ -112,9 +112,8 @@ def parse_dia_hora(texto: str):
             raise ValueError("La fecha y hora deben ser futuras.")
         return fecha
 
-   # 1) hoy/mañana/pasado mañana (a las)? HH(:MM)?
-    m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+(?:a\s+las)?)?\s+(\d{1,2})(?::([0-5]\d))?$", s)
-
+    # 1) hoy/mañana/pasado mañana HH(:MM)?
+    m = re.match(r"^(hoy|mañana|pasado mañana)\s+(\d{1,2})(?::([0-5]\d))?$", s)
     if m:
         palabra, hh, mm = m.groups()
         hh, mm = _hhmm(hh, mm)

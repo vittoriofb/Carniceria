@@ -101,6 +101,13 @@ def normalizar_fecha_texto(s: str) -> str:
     # mañana al mediodía -> 13:00 mañana
     s = _MANANA_MEDIODIA_RE.sub("13:00 mañana", s)
 
+    # mañana a las 12 -> 12:00 mañana
+    _MANANA_ALAS_RE = re.compile(r"\bmañana\s+a\s+las\s+(\d{1,2})(?::(\d{2}))?\b")
+    s = _MANANA_ALAS_RE.sub(lambda m: _to_hhmm(m.group(1), m.group(2) or 0) + " mañana", s)
+
+    # mañana al mediodía -> 13:00 mañana
+    s = re.sub(r"\bmañana\s+al\s+mediod[ií]a\b", "13:00 mañana", s)
+
     # 2 menos cuarto -> 1:45
     def _menos_cuarto(m):
         h = int(m.group(1))
