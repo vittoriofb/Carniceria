@@ -314,7 +314,8 @@ def process_message(data):
                     session["hora"] = fecha  # guardamos datetime completo
                     session["paso"] = 3
 
-                    catalogo = "\n".join([f"- {prod} ({precio}€/kg)" for prod, precio in PRODUCTOS_DB.items()])
+                    # ✅ PRODUCTOS_DB es lista, no dict
+                    catalogo = "\n".join([f"- {prod}" for prod in PRODUCTOS_DB])
                     return (
                         f"Perfecto. Programado para *{formatear_fecha(session['hora'])}*.\n\n"
                         f"Estos son nuestros productos:\n{catalogo}\n\n"
@@ -346,14 +347,13 @@ def process_message(data):
                 if msg == "listo":
                     if not session["carrito"]:
                         return "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
-                    total = sum(cant * PRODUCTOS_DB[prod] for prod, cant in session["carrito"].items())
-                    session["total"] = total
+                    # ❌ fuera cálculos de precios, solo confirmamos pedido
                     session["paso"] = 4
                     return (f"Este es tu pedido para *{formatear_fecha(session['hora'])}*:\n"
                             f"{mostrar_carrito(session)}\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
-                # >>> NUEVO: detectar múltiples productos en un solo mensaje
+                    # >>> NUEVO: detectar múltiples productos en un solo mensaje
                 encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if encontrados:
                     for prod, cantidad in encontrados:
