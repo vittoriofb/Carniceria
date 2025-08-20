@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import re
+from thefuzz import process
 
 # --- Normalización de expresiones de fecha/hora típicas de WhatsApp ---
 
@@ -325,3 +326,14 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             continue
 
     return items
+
+
+def _buscar_producto_fuzzy(nombre: str, productos_db, threshold=70):
+    """
+    Busca el producto más parecido dentro de productos_db usando fuzzy matching.
+    """
+    choices = list(productos_db.keys())
+    match, score = process.extractOne(nombre, choices)
+    if score >= threshold:
+        return match
+    return None

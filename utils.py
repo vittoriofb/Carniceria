@@ -7,7 +7,7 @@ from printer import send_to_printer
 from data import PRODUCTOS_DB
 
 # >>> NUEVO: utilidades de expresiones (no cambian la lógica, solo amplían la comprensión)
-from expresiones import normalizar_fecha_texto, extraer_productos_desde_texto
+from expresiones import normalizar_fecha_texto, extraer_productos_desde_texto, _buscar_producto_fuzzy
 # <<<
 
 SESSIONS = {}
@@ -336,62 +336,64 @@ def process_message(data):
             # Paso 3: Añadir o eliminar productos
             if session["paso"] == 3:
 
+                # >>> Detectar múltiples productos en un solo mensaje
+                encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
+                if encontrados:
+                    añadidos = []
+                    for prod, cantidad in encontrados:
+                        # Fuzzy matching para que sea más humano
+                        prod_real = _buscar_producto_fuzzy(prod, PRODUCTOS_DB)
+                        if not prod_real:
+                            continue  # ignorar si no lo reconoce
+                        categoria = PRODUCTOS_DB[prod_real]
+                        if categoria == "otro":
+                            cantidad = 1.0  # solo permitir unidades
+                        session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
+                        # Formatear mensaje según tipo
+                        if categoria == "otro":
+                            añadidos.append(f"{prod_real} ({int(cantidad)} unidad{'s' if cantidad > 1 else ''})")
+                        else:
+                            añadidos.append(f"{prod_real} ({cantidad} kg)")
+                    if añadidos:
+                        return f"{', '.join(añadidos)} añadido(s).\nCarrito actual:\n{mostrar_carrito(session)}"
+
+                # >>> Manejar eliminar
                 if msg.startswith("eliminar "):
                     producto = msg.replace("eliminar ", "").strip()
-                    if producto in session["carrito"]:
-                        session["carrito"].pop(producto)
-                        return f"{producto} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
+                    prod_real = _buscar_producto_fuzzy(producto, PRODUCTOS_DB)
+                    if prod_real and prod_real in session["carrito"]:
+                        session["carrito"].pop(prod_real)
+                        return f"{prod_real} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
                     else:
                         return f"No tienes {producto} en tu carrito."
 
+                # >>> Manejar "listo"
                 if msg == "listo":
                     if not session["carrito"]:
                         return "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
-                    # ❌ fuera cálculos de precios, solo confirmamos pedido
                     session["paso"] = 4
+                    carrito_formateado = mostrar_carrito(session)
                     return (f"Este es tu pedido para *{formatear_fecha(session['hora'])}*:\n"
-                            f"{mostrar_carrito(session)}\n"
+                            f"{carrito_formateado}\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
-                # >>> NUEVO: detectar múltiples productos en un solo mensaje
-                encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
-                if encontrados:
-                    for prod, cantidad in encontrados:
-                        categoria = PRODUCTOS_DB.get(prod, "otro")
-                        cantidad = float(cantidad)
-
-                        if categoria == "otro":
-                            # Solo permitir unidades
-                            if cantidad != 1.0:
-                                return f"⚠️ {prod} se pide como plato entero, no por kilos."
-                            session["carrito"][prod] = session["carrito"].get(prod, 0) + 1
-                        else:
-                            # Carne/aves → se pide por kg
-                            session["carrito"][prod] = session["carrito"].get(prod, 0) + cantidad
-
-                    añadido = ", ".join(f"{p} ({c} kg)" if PRODUCTOS_DB[p] != "otro" else f"{p}" for p, c in encontrados)
-                    return f"{añadido} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
-
-                # Patrón original: producto + kg
-                match = re.match(r"([a-záéíóúñü ]+)\s+(\d+(?:\.\d+)?)\s*kg", msg)
-                if match:
-                    producto = match.group(1).strip()
-                    cantidad = float(match.group(2))
-                    if producto in PRODUCTOS_DB:
-                        session["carrito"][producto] = session["carrito"].get(producto, 0) + cantidad
-                        return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
-                    else:
-                        return "Ese producto no está en el catálogo."
-
-                # Último intento con producto único flexible
+                # >>> Último intento: producto único flexible
                 unico = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if len(unico) == 1:
-                    producto, cantidad = unico[0]
-                    if producto in PRODUCTOS_DB:
-                        session["carrito"][producto] = session["carrito"].get(producto, 0) + float(cantidad)
-                        return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
+                    prod, cantidad = unico[0]
+                    prod_real = _buscar_producto_fuzzy(prod, PRODUCTOS_DB)
+                    if prod_real:
+                        categoria = PRODUCTOS_DB[prod_real]
+                        if categoria == "otro":
+                            cantidad = 1.0
+                            session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
+                            return f"{prod_real} ({int(cantidad)} unidad{'s' if cantidad > 1 else ''}) añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
+                        else:
+                            session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
+                            return f"{prod_real} ({cantidad} kg) añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
 
-                return "Formato no válido. Ejemplo: '2 kilos de pollo'. O escribe 'listo' si has terminado."
+                return "Formato no válido. Ejemplo: '2 kilos de pollo' o '2 hamburguesas'."
+
 
 
             # Paso 4: Confirmación
