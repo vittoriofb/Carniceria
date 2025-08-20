@@ -17,7 +17,7 @@ def mostrar_carrito(session):
         return "Carrito vacío."
     lineas = []
     for prod, cant in session["carrito"].items():
-        lineas.append(f"• {prod.capitalize()}: {cant} kg")
+        lineas.append(f"• {prod.capitalize()}: {cant}")
     return "\n".join(lineas)
 
 

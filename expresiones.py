@@ -328,7 +328,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
     return items
 
 
-def _buscar_producto_fuzzy(nombre: str, productos_db, threshold=70):
+def _buscar_producto_fuzzy(nombre: str, productos_db, threshold=60):
     """
     Busca el producto más parecido dentro de productos_db usando fuzzy matching.
     """
