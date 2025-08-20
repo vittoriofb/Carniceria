@@ -1,7 +1,7 @@
 # data.py
 import pandas as pd
 
-def cargar_productos(ruta_excel: str = "productos.xlsx") -> dict[str, float]:
+def cargar_productos(ruta_excel: str = "productos_aranda.xlsx") -> dict[str, float]:
     """
     Carga los productos desde un Excel en formato:
     | Producto | Precio |
