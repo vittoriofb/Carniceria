@@ -351,7 +351,6 @@ def process_message(data):
                     session["paso"] = 4
                     return (f"Este es tu pedido para *{formatear_fecha(session['hora'])}*:\n"
                             f"{mostrar_carrito(session)}\n"
-                            f"💰 Total Estimado: {total:.2f}€\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
                 # >>> NUEVO: detectar múltiples productos en un solo mensaje
@@ -393,7 +392,6 @@ def process_message(data):
                         f"👤 Cliente: {session['nombre']}\n"
                         f"🕒 Hora: {formatear_fecha(session['hora'])}\n"
                         f"🛒 Carrito:\n{mostrar_carrito(session)}\n"
-                        f"💰 Total Estimado: {session['total']:.2f}€"
                     )
                     send_to_printer(user_id, session)
                     SESSIONS.pop(user_id, None)
