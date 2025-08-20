@@ -89,9 +89,8 @@ def parse_dia_hora(texto: str):
     # normalizar 'próximo' a 'proximo' por si acaso
     s = s.replace("próximo", "proximo").replace("míercoles", "miércoles").replace("mediodia", "mediodía")
 
-    # >>> normalización coloquial (15h, 3pm, 'y media', etc.)
+    # OJO: tu normalizador puede convertir "mañana a las 12" en "12:00 mañana"
     s = normalizar_fecha_texto(s)
-    # <<<
 
     ahora = datetime.now()
 
@@ -102,7 +101,7 @@ def parse_dia_hora(texto: str):
             raise ValueError("Hora inválida.")
         return h, m
 
-    # 0) hoy/mañana/pasado mañana con tramo del día (mañana, tarde, noche, mediodía)
+    # 0) hoy/mañana/pasado mañana con tramo del día (incluye 'por la' y 'al')
     m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+(?:por\s+la|al))?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
     if m:
         when, periodo = m.groups()
@@ -117,6 +116,17 @@ def parse_dia_hora(texto: str):
     m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+(?:a\s+las)?)?\s+(\d{1,2})(?::([0-5]\d))?$", s)
     if m:
         palabra, hh, mm = m.groups()
+        hh, mm = _hhmm(hh, mm)
+        dias = 0 if palabra == "hoy" else (1 if palabra == "mañana" else 2)
+        fecha = ahora.replace(hour=hh, minute=mm, second=0, microsecond=0) + timedelta(days=dias)
+        if fecha <= ahora:
+            raise ValueError("La fecha y hora deben ser futuras.")
+        return fecha
+
+    # 1bis) HH(:MM)? (hoy|mañana|pasado mañana)  <-- por la normalización "12:00 mañana"
+    m = re.match(r"^(\d{1,2})(?::([0-5]\d))?\s+(hoy|mañana|pasado mañana)$", s)
+    if m:
+        hh, mm, palabra = m.groups()
         hh, mm = _hhmm(hh, mm)
         dias = 0 if palabra == "hoy" else (1 if palabra == "mañana" else 2)
         fecha = ahora.replace(hour=hh, minute=mm, second=0, microsecond=0) + timedelta(days=dias)
@@ -179,6 +189,7 @@ def parse_dia_hora(texto: str):
         return _fecha_dia_mes(int(dia_mes), h, mi)
 
     raise ValueError("Formato no reconocido.")
+
 
 
     
