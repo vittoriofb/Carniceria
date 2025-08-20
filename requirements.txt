@@ -3,3 +3,5 @@ twilio
 gunicorn
 reportlab
 sendgrid
+pandas
+openpyxl
