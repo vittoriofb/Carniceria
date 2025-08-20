@@ -13,13 +13,13 @@ from expresiones import normalizar_fecha_texto, extraer_productos_desde_texto
 SESSIONS = {}
 
 def mostrar_carrito(session):
-    """Devuelve un string con el contenido actual del carrito."""
     if not session["carrito"]:
         return "Carrito vacío."
-    return "\n".join([
-        f"• {prod.capitalize()}: {cant} kg — {cant * PRODUCTOS_DB[prod]:.2f}€"
-        for prod, cant in session["carrito"].items()
-    ])
+    lineas = []
+    for prod, cant in session["carrito"].items():
+        lineas.append(f"• {prod.capitalize()}: {cant} kg")
+    return "\n".join(lineas)
+
 
 def formatear_fecha(dt):
     """Devuelve fecha en formato 'martes 13 de agosto - 15:00' (siempre en español)."""
