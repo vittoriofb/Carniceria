@@ -336,18 +336,6 @@ def process_message(data):
             # Paso 3: Añadir o eliminar productos
             if session["paso"] == 3:
 
-                categoria = PRODUCTOS_DB[prod]
-
-                if categoria == "otro":
-                    # Solo permitir unidades
-                    if cantidad != 1.0:
-                        return f"⚠️ {prod} se pide como plato entero, no por kilos."
-                    session["carrito"][prod] = session["carrito"].get(prod, 0) + 1
-                else:
-                    # Carne/aves → se pide por kg
-                    session["carrito"][prod] = session["carrito"].get(prod, 0) + cantidad
-
-
                 if msg.startswith("eliminar "):
                     producto = msg.replace("eliminar ", "").strip()
                     if producto in session["carrito"]:
@@ -365,17 +353,26 @@ def process_message(data):
                             f"{mostrar_carrito(session)}\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
-                    # >>> NUEVO: detectar múltiples productos en un solo mensaje
+                # >>> NUEVO: detectar múltiples productos en un solo mensaje
                 encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if encontrados:
                     for prod, cantidad in encontrados:
-                        if prod in PRODUCTOS_DB:
-                            session["carrito"][prod] = session["carrito"].get(prod, 0) + float(cantidad)
-                    if encontrados:
-                        añadido = ", ".join(f"{p} ({c} kg)" for p, c in encontrados)
-                        return f"{añadido} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
+                        categoria = PRODUCTOS_DB.get(prod, "otro")
+                        cantidad = float(cantidad)
 
-                # Tu patrón original
+                        if categoria == "otro":
+                            # Solo permitir unidades
+                            if cantidad != 1.0:
+                                return f"⚠️ {prod} se pide como plato entero, no por kilos."
+                            session["carrito"][prod] = session["carrito"].get(prod, 0) + 1
+                        else:
+                            # Carne/aves → se pide por kg
+                            session["carrito"][prod] = session["carrito"].get(prod, 0) + cantidad
+
+                    añadido = ", ".join(f"{p} ({c} kg)" if PRODUCTOS_DB[p] != "otro" else f"{p}" for p, c in encontrados)
+                    return f"{añadido} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
+
+                # Patrón original: producto + kg
                 match = re.match(r"([a-záéíóúñü ]+)\s+(\d+(?:\.\d+)?)\s*kg", msg)
                 if match:
                     producto = match.group(1).strip()
@@ -395,6 +392,7 @@ def process_message(data):
                         return f"{producto} añadido ({cantidad} kg).\nCarrito actual:\n{mostrar_carrito(session)}"
 
                 return "Formato no válido. Ejemplo: '2 kilos de pollo'. O escribe 'listo' si has terminado."
+
 
             # Paso 4: Confirmación
             if session["paso"] == 4:
