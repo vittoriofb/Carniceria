@@ -9,7 +9,7 @@ def cargar_productos(ruta_excel: str = "productos.xlsx") -> dict[str, float]:
     df = pd.read_excel(ruta_excel)
 
     # Normalizamos nombres en minúsculas
-    productos = dict(zip(df["Producto"].str.lower().str.strip(), df["Precio"]))
+    productos = dict(zip(df["Nombre"].str.lower().str.strip()))
     return productos
 
 # Para uso directo
