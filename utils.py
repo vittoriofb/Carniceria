@@ -12,12 +12,24 @@ from expresiones import normalizar_fecha_texto, extraer_productos_desde_texto, _
 
 SESSIONS = {}
 
+def formatear_item(prod: str, cantidad: float, productos_db: dict) -> str:
+    """Devuelve un string con el formato correcto según la categoría del producto."""
+    categoria = productos_db.get(prod, "kg")
+    if categoria == "otro":
+        unidades = int(cantidad)
+        return f"{prod.capitalize()}: {unidades} unidad{'es' if unidades != 1 else ''}"
+    else:
+        # Redondear cantidades si procede
+        cantidad_fmt = f"{cantidad:.2f}".rstrip("0").rstrip(".")
+        return f"{prod.capitalize()}: {cantidad_fmt} kg"
+
+
 def mostrar_carrito(session):
     if not session["carrito"]:
         return "Carrito vacío."
     lineas = []
     for prod, cant in session["carrito"].items():
-        lineas.append(f"• {prod.capitalize()}: {cant}")
+        lineas.append("• " + formatear_item(prod, cant, PRODUCTOS_DB))
     return "\n".join(lineas)
 
 
@@ -318,7 +330,6 @@ def process_message(data):
                     catalogo = "\n".join([f"- {prod}" for prod in PRODUCTOS_DB])
                     return (
                         f"Perfecto. Programado para *{formatear_fecha(session['hora'])}*.\n\n"
-                        f"Estos son nuestros productos:\n{catalogo}\n\n"
                         "Dime qué quieres y la cantidad.\n"
                         "Para eliminar un producto: 'eliminar pollo'.\n"
                         "Cuando termines, escribe 'listo'."
@@ -326,12 +337,10 @@ def process_message(data):
                 except ValueError as e:
                     return (f"{str(e)}\n"
                             "Por favor, indica *día y hora* con uno de estos formatos:\n"
-                            "• martes 15:00\n"
+                            "• martes a las 15:00\n"
                             "• 13/08 15:00\n"
-                            "• mañana 12:30\n"
-                            "• este viernes por la tarde\n"
-                            "• el 20 por la tarde\n"
-                            "• pasado mañana 10:00")
+                            "• mañana a las 12:30\n"
+                            "• este viernes por la tarde\n")
 
             # Paso 3: Añadir o eliminar productos
             if session["paso"] == 3:
@@ -349,11 +358,8 @@ def process_message(data):
                         if categoria == "otro":
                             cantidad = 1.0  # solo permitir unidades
                         session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
-                        # Formatear mensaje según tipo
-                        if categoria == "otro":
-                            añadidos.append(f"{prod_real} ({int(cantidad)} unidad{'s' if cantidad > 1 else ''})")
-                        else:
-                            añadidos.append(f"{prod_real} ({cantidad} kg)")
+                        # Usamos formatear_item para uniformidad
+                        añadidos.append(formatear_item(prod_real, cantidad, PRODUCTOS_DB))
                     if añadidos:
                         return f"{', '.join(añadidos)} añadido(s).\nCarrito actual:\n{mostrar_carrito(session)}"
 
@@ -386,11 +392,8 @@ def process_message(data):
                         categoria = PRODUCTOS_DB[prod_real]
                         if categoria == "otro":
                             cantidad = 1.0
-                            session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
-                            return f"{prod_real} ({int(cantidad)} unidad{'s' if cantidad > 1 else ''}) añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
-                        else:
-                            session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
-                            return f"{prod_real} ({cantidad} kg) añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
+                        session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
+                        return f"{formatear_item(prod_real, cantidad, PRODUCTOS_DB)} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
 
                 return "Formato no válido. Ejemplo: '2 kilos de pollo' o '2 hamburguesas'."
 

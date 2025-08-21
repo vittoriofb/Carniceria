@@ -168,7 +168,7 @@ _FILLER_INICIO = re.compile(
     r"quisiera\s+encargar|quiero\s+encargar|me\s+encargas)\s+", re.I
 )
 
-_SEP = re.compile(r"\s*(?:,|;|\+|/|\s+y\s+|\s+e\s+)\s*", re.I)
+_SEP = re.compile(r"\s*(?:,|;|\+|/|y|e)\s*", re.I)
 
 # Segmento tipo: "2 kg de pollo" | "2kg pollo" | "pollo 2 kg" | "250g de chorizo" | "medio de lomo"
 _PAT_QTY_DE_PROD = re.compile(
@@ -289,16 +289,28 @@ def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
 
 def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float]]:
     """
-    Extrae [(producto, cantidad_kg), ...] desde un mensaje libre.
-    Acepta múltiples items separados por ',', ';', 'y', 'e'.
+    Extrae [(producto, cantidad_kg_o_unidades), ...] desde un mensaje libre.
+    Acepta múltiples items separados por ',', ';', '+', '/', ' y ', ' e '.
     Reconoce expresiones coloquiales como "medio kilo", "un cuarto de pollo", "tres cuartos", etc.
     """
     if not texto:
         return []
+
     keys = productos_db.keys() if hasattr(productos_db, "keys") else list(productos_db)
     raw = texto.strip().lower()
 
-    # Normalización de cantidades coloquiales
+    # 0) Quitar fillers al INICIO del mensaje (pueden venir repetidos: "hola, quiero... quiero...")
+    prev = None
+    while True:
+        nuevo = _FILLER_INICIO.sub("", raw).strip()
+        if nuevo == raw:
+            break
+        raw = nuevo
+
+    # 0.1) Limpiar posible ruido de ID/teléfono al final: "... de 12345"
+    raw = re.sub(r"(?:\s+de)?\s+\d{3,}\b$", "", raw)
+
+    # 1) Normalización de cantidades coloquiales
     reemplazos_qty = [
         (r"\bmedio\s+kilo\b", "0.5 kg"),
         (r"\b(kilo|kg)\s+y\s+medio\b", "1.5 kg"),
@@ -312,19 +324,17 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
     for pat, rep in reemplazos_qty:
         raw = re.sub(pat, rep, raw)
 
-    # Trocear en segmentos
-    segmentos = _SEP.split(raw)
+    # 2) Trocear en segmentos por separadores naturales: ",", ";", "+", "/", " y ", " e "
+    segmentos = [s for s in _SEP.split(raw) if s]
     items: list[tuple[str, float]] = []
 
     for seg in segmentos:
-        if not seg:
-            continue
-
+        # 2.1) Quitar fillers al INICIO de cada segmento
         seg = _FILLER_INICIO.sub("", seg).strip()
         if not seg:
             continue
 
-        # Intento 1: qty + [unit] + de + prod
+        # Intento 1: qty + [unit] + de + prod  (p.ej. "2 kg de pollo", "250g de chorizo")
         m = _PAT_QTY_DE_PROD.match(seg)
         if m:
             qty = _parse_qty(m.group("qty"), m.group("unit"))
@@ -333,7 +343,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                 items.append((prod, qty))
             continue
 
-        # Intento 2: prod + qty [+ unit]
+        # Intento 2: prod + qty [+ unit]  (p.ej. "pollo 2 kg")
         m = _PAT_PROD_QTY.match(seg)
         if m:
             qty = _parse_qty(m.group("qty"), m.group("unit"))
@@ -342,7 +352,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                 items.append((prod, qty))
             continue
 
-        # Intento 3: num_txt + [unit] + de + prod
+        # Intento 3: num_txt + [unit] + de + prod  (p.ej. "medio kilo de lomo", "un cuarto de ternera")
         m = _PAT_NUM_TXT.match(seg)
         if m:
             qty = _parse_qty(m.group("num"), m.group("unit"))
@@ -351,10 +361,11 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                 items.append((prod, qty))
             continue
 
-        # Intento 4: "pollo medio" (asumir kg)
+        # Intento 4: "pollo medio" (asumimos kg si no hay unidad)
         m = re.match(
             r"(?P<prod>[a-záéíóúñü\s\-]+)\s+(?P<num>medio|media|1/2|cuarto|1/4|tres\s+cuartos|3/4)$",
-            seg, re.I)
+            seg, re.I
+        )
         if m:
             qty = _parse_qty(m.group("num"), "kg")
             prod = _canonicalizar_producto(m.group("prod"), keys)
@@ -362,7 +373,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                 items.append((prod, qty))
             continue
 
-        # Intento 5: unidades sueltas ("2 hamburguesas", "1 paella")
+        # Intento 5: unidades sueltas ("2 hamburguesas", "un arroz", "1 paella")
         m = _PAT_UNIDADES_PIEZAS.match(seg)
         if m:
             num_raw = m.group("num").lower()
