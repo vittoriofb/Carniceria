@@ -9,4 +9,3 @@ thefuzz
 python-Levenshtein
 unidecode
 fuzzywuzzy
-difflib
