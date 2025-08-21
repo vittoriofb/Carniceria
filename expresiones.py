@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import re
-from thefuzz import process
+from thefuzz import process, fuzz
+import unicodedata
+
 
 # --- Normalización de expresiones de fecha/hora típicas de WhatsApp ---
 
@@ -222,44 +224,90 @@ def _parse_qty(qty_raw: str, unit_raw: str | None) -> float:
     # si no hay unidad o es kg, ya está en kg
     return round(qty, 3)
 
+def _strip_accents(s: str) -> str:
+    """Quita acentos/diacríticos para comparar de forma robusta."""
+    return unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("utf-8")
+
+
+def _buscar_producto_fuzzy(nombre: str, productos_db_keys, threshold=60):
+    """
+    Busca el producto más parecido dentro de productos_db usando fuzzy matching.
+    Devuelve la clave original del catálogo.
+    """
+    if not nombre:
+        return None
+
+    choices_orig = list(productos_db_keys)
+    choices_norm = [_strip_accents(c).lower() for c in choices_orig]
+    query = _strip_accents(nombre).lower()
+
+    res = process.extractOne(query, choices_norm, scorer=fuzz.WRatio)
+    if not res:
+        return None
+    match_norm, score = res
+    if score < threshold:
+        return None
+
+    idx = choices_norm.index(match_norm)
+    return choices_orig[idx]
+
+
 def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
-    """Devuelve la clave de producto existente más probable por coincidencia de subcadena."""
+    """
+    Devuelve la clave de producto más probable:
+    1) match exacto sin tildes,
+    2) coincidencia por subcadena (más larga),
+    3) fuzzy matching como fallback.
+    """
     prod = re.sub(r"[^a-záéíóúñü\s\-]", "", prod_raw.lower()).strip()
     if not prod:
         return None
 
     keys = list(productos_db_keys)
-    if prod in keys:
-        return prod
+    prod_norm = _strip_accents(prod)
 
-    # Mejor coincidencia por subcadena (la más larga)
+    # 1) match exacto (sin tildes)
+    for k in keys:
+        if _strip_accents(k.lower()) == prod_norm:
+            return k
+
+    # 2) coincidencia por subcadena (más larga)
     best = None
     best_len = -1
     for k in keys:
-        k_l = k.lower()
-        if k_l in prod or prod in k_l:
-            if len(k_l) > best_len:
+        k_norm = _strip_accents(k.lower())
+        if k_norm in prod_norm or prod_norm in k_norm:
+            if len(k_norm) > best_len:
                 best = k
-                best_len = len(k_l)
-    return best
+                best_len = len(k_norm)
+    if best:
+        return best
+
+    # 3) fallback fuzzy
+    return _buscar_producto_fuzzy(prod_raw, productos_db_keys)
+
 
 def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float]]:
     """
     Extrae [(producto, cantidad_kg), ...] desde un mensaje libre.
     Acepta múltiples items separados por ',', ';', 'y', 'e'.
+    Reconoce expresiones coloquiales como "medio kilo", "un cuarto de pollo", "tres cuartos", etc.
     """
     if not texto:
         return []
     keys = productos_db.keys() if hasattr(productos_db, "keys") else list(productos_db)
     raw = texto.strip().lower()
 
-    # Normalización previa de cantidades coloquiales
+    # Normalización de cantidades coloquiales
     reemplazos_qty = [
         (r"\bmedio\s+kilo\b", "0.5 kg"),
         (r"\b(kilo|kg)\s+y\s+medio\b", "1.5 kg"),
         (r"\b(kilo|kg)\s+y\s+cuarto\b", "1.25 kg"),
         (r"\b(kilo|kg)\s+y\s+tres\s+cuartos\b", "1.75 kg"),
         (r"\bcuarto\s+y\s+mitad\b", "0.375 kg"),
+        (r"\bun cuarto\b", "0.25 kg"),
+        (r"\btres cuartos\b", "0.75 kg"),
+        (r"\bmedia\b", "0.5 kg"),
     ]
     for pat, rep in reemplazos_qty:
         raw = re.sub(pat, rep, raw)
@@ -272,8 +320,9 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
         if not seg:
             continue
 
-        # Ignorar fillers al inicio del segmento
         seg = _FILLER_INICIO.sub("", seg).strip()
+        if not seg:
+            continue
 
         # Intento 1: qty + [unit] + de + prod
         m = _PAT_QTY_DE_PROD.match(seg)
@@ -301,7 +350,6 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             if prod and qty > 0:
                 items.append((prod, qty))
             continue
-        
 
         # Intento 4: "pollo medio" (asumir kg)
         m = re.match(
@@ -314,7 +362,6 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                 items.append((prod, qty))
             continue
 
-        
         # Intento 5: unidades sueltas ("2 hamburguesas", "1 paella")
         m = _PAT_UNIDADES_PIEZAS.match(seg)
         if m:
@@ -326,14 +373,3 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             continue
 
     return items
-
-
-def _buscar_producto_fuzzy(nombre: str, productos_db, threshold=60):
-    """
-    Busca el producto más parecido dentro de productos_db usando fuzzy matching.
-    """
-    choices = list(productos_db.keys())
-    match, score = process.extractOne(nombre, choices)
-    if score >= threshold:
-        return match
-    return None
