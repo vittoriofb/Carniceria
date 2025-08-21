@@ -3,6 +3,7 @@ import re
 from thefuzz import process, fuzz
 import unicodedata
 from difflib import SequenceMatcher, get_close_matches
+from unidecode import unidecode
 
 
 # --- Normalización de expresiones de fecha/hora típicas de WhatsApp ---
@@ -225,63 +226,61 @@ def _parse_qty(qty_raw: str, unit_raw: str | None) -> float:
     # si no hay unidad o es kg, ya está en kg
     return round(qty, 3)
 
-def _strip_accents(s: str) -> str:
-    """Quita acentos/diacríticos para comparar de forma robusta."""
-    return unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("utf-8")
+STOPWORDS = {"de", "y", "con", "el", "la", "los", "las", "un", "una", "unos", "unas"}
 
-
-from difflib import SequenceMatcher, get_close_matches
+def _strip_accents(text: str) -> str:
+    return unidecode(text)
 
 def _similaridad(a: str, b: str) -> float:
     """Devuelve la similitud entre dos cadenas usando ratio de difflib."""
     return SequenceMatcher(None, a, b).ratio()
 
+def _preprocesar(texto: str) -> list[str]:
+    """Convierte el texto a palabras significativas, normalizadas y sin stopwords."""
+    texto = _strip_accents(texto.lower())
+    palabras = [w for w in texto.split() if w not in STOPWORDS]
+    return palabras
+
 def _buscar_producto_fuzzy(texto: str, productos_db: dict) -> str | None:
-    """
-    Busca un producto en la base de datos:
-    1. Coincidencia exacta
-    2. Coincidencia por palabras clave
-    3. Fuzzy con penalización por longitud
-    4. Get_close_matches como último recurso
-    """
-    texto = texto.lower().strip()
+    texto_norm = _preprocesar(texto)
+    texto_set = set(texto_norm)
     productos = list(productos_db.keys())
-    productos_lower = [p.lower() for p in productos]
 
-    # --- 1) Coincidencia exacta completa
+    # --- 1) Coincidencia exacta
     for p in productos:
-        if texto == p.lower():
+        if texto.lower().strip() == p.lower().strip():
             return p
 
-    # --- 2) Coincidencia por palabras clave
+    # --- 2) Coincidencia por palabras clave (todas las palabras del texto deben aparecer)
     for p in productos:
-        if all(word in p.lower() for word in texto.split()):
+        p_words = set(_preprocesar(p))
+        if texto_set <= p_words:  # todas las palabras del texto están en el producto
             return p
 
-    # --- 3) Fuzzy matching con penalización por longitud
+    # --- 3) Fuzzy matching con penalización
     mejor = None
     mejor_score = 0
     for p in productos:
-        score = _similaridad(texto, p.lower())
-        long_diff = abs(len(p) - len(texto))
-        penalizacion = 1 - (long_diff / max(len(p), len(texto), 1))
-        score *= penalizacion
+        p_words = _preprocesar(p)
+        # similitud con difflib
+        score = _similaridad(" ".join(texto_norm), " ".join(p_words))
+
+        # Penalización por diferencia de longitud
+        len_diff = abs(len(p_words) - len(texto_norm))
+        score *= max(0.0, 1 - len_diff / max(len(p_words), len(texto_norm), 1))
+
+        # Penalización por palabras extra
+        extra_words = set(p_words) - texto_set
+        score *= max(0.0, 1 - len(extra_words) / max(len(p_words), 1))
 
         if score > mejor_score:
             mejor_score = score
             mejor = p
 
-    if mejor and mejor_score > 0.55:  # cutoff ajustable
+    # Retorna solo si realmente es suficientemente parecido
+    if mejor_score >= 0.5:  # puedes ajustar el cutoff
         return mejor
-
-    # --- 4) Último recurso: get_close_matches
-    sugerencias = get_close_matches(texto, productos_lower, n=1, cutoff=0.5)
-    if sugerencias:
-        idx = productos_lower.index(sugerencias[0])
-        return productos[idx]
-
     return None
-
 
 
 def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
