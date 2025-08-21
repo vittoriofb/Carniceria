@@ -229,7 +229,7 @@ def _strip_accents(s: str) -> str:
     return unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("utf-8")
 
 
-def _buscar_producto_fuzzy(nombre: str, productos_db_keys, threshold=60):
+def _buscar_producto_fuzzy(nombre: str, productos_db_keys, threshold=75):
     """
     Busca el producto más parecido dentro de productos_db usando fuzzy matching.
     Devuelve la clave original del catálogo.
@@ -287,11 +287,11 @@ def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
     return _buscar_producto_fuzzy(prod_raw, productos_db_keys)
 
 
-def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float]]:
+def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float, str]]:
     """
-    Extrae [(producto, cantidad_kg_o_unidades), ...] desde un mensaje libre.
-    Acepta múltiples items separados por ',', ';', '+', '/', ' y ', ' e '.
-    Reconoce expresiones coloquiales como "medio kilo", "un cuarto de pollo", "tres cuartos", etc.
+    Extrae [(producto, cantidad, unidad), ...] desde un mensaje libre.
+    - unidad: "kg" si el cliente dijo kg/g (se convierte a kg), "u" si habló de piezas.
+    - Si NO se menciona 'kg'/'g', se asume unidades ("u").
     """
     if not texto:
         return []
@@ -299,7 +299,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
     keys = productos_db.keys() if hasattr(productos_db, "keys") else list(productos_db)
     raw = texto.strip().lower()
 
-    # 0) Quitar fillers al INICIO del mensaje (pueden venir repetidos: "hola, quiero... quiero...")
+    # 0) Quitar fillers al INICIO (repetidos)
     prev = None
     while True:
         nuevo = _FILLER_INICIO.sub("", raw).strip()
@@ -307,7 +307,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             break
         raw = nuevo
 
-    # 0.1) Limpiar posible ruido de ID/teléfono al final: "... de 12345"
+    # 0.1) Limpiar posible ruido numérico al final
     raw = re.sub(r"(?:\s+de)?\s+\d{3,}\b$", "", raw)
 
     # 1) Normalización de cantidades coloquiales
@@ -324,63 +324,109 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
     for pat, rep in reemplazos_qty:
         raw = re.sub(pat, rep, raw)
 
-    # 2) Trocear en segmentos por separadores naturales: ",", ";", "+", "/", " y ", " e "
+    # 2) Trocear en segmentos por separadores
     segmentos = [s for s in _SEP.split(raw) if s]
-    items: list[tuple[str, float]] = []
+    items: list[tuple[str, float, str]] = []
+
+    # Ayudas locales de unidad
+    _KG_TOKENS = {"kg", "kilo", "kilos", "kgs"}
+    _G_TOKENS  = {"g", "gr", "grs", "gramo", "gramos"}
+
+    def _to_units_number(qty_raw: str) -> float:
+        q = qty_raw.strip().lower().replace(",", ".")
+        q = re.sub(r"\s+", " ", q)
+        if q in _NUM_TXT:
+            return float(_NUM_TXT[q])
+        try:
+            return float(q)
+        except ValueError:
+            return 0.0
 
     for seg in segmentos:
-        # 2.1) Quitar fillers al INICIO de cada segmento
         seg = _FILLER_INICIO.sub("", seg).strip()
         if not seg:
             continue
 
-        # Intento 1: qty + [unit] + de + prod  (p.ej. "2 kg de pollo", "250g de chorizo")
+        # 1) qty + [unit] + (de) + prod
         m = _PAT_QTY_DE_PROD.match(seg)
         if m:
-            qty = _parse_qty(m.group("qty"), m.group("unit"))
+            qty_raw = m.group("qty")
+            unit_raw = (m.group("unit") or "").lower()
             prod = _canonicalizar_producto(m.group("prod"), keys)
-            if prod and qty > 0:
-                items.append((prod, qty))
+            if not prod:
+                continue
+
+            if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
+                qty = _parse_qty(qty_raw, unit_raw)   # kg normalizados
+                if qty > 0:
+                    items.append((prod, qty, "kg"))
+            else:
+                # Sin unidad explícita -> tratamos como unidades/piezas
+                qty = _to_units_number(qty_raw)
+                if qty > 0:
+                    items.append((prod, qty, "u"))
             continue
 
-        # Intento 2: prod + qty [+ unit]  (p.ej. "pollo 2 kg")
+        # 2) prod + qty [+ unit]
         m = _PAT_PROD_QTY.match(seg)
         if m:
-            qty = _parse_qty(m.group("qty"), m.group("unit"))
+            qty_raw = m.group("qty")
+            unit_raw = (m.group("unit") or "").lower()
             prod = _canonicalizar_producto(m.group("prod"), keys)
-            if prod and qty > 0:
-                items.append((prod, qty))
+            if not prod:
+                continue
+
+            if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
+                qty = _parse_qty(qty_raw, unit_raw)   # kg
+                if qty > 0:
+                    items.append((prod, qty, "kg"))
+            else:
+                qty = _to_units_number(qty_raw)
+                if qty > 0:
+                    items.append((prod, qty, "u"))
             continue
 
-        # Intento 3: num_txt + [unit] + de + prod  (p.ej. "medio kilo de lomo", "un cuarto de ternera")
+        # 3) num_txt + [unit] + de + prod
         m = _PAT_NUM_TXT.match(seg)
         if m:
-            qty = _parse_qty(m.group("num"), m.group("unit"))
+            num_raw = m.group("num")
+            unit_raw = (m.group("unit") or "").lower()
             prod = _canonicalizar_producto(m.group("prod"), keys)
-            if prod and qty > 0:
-                items.append((prod, qty))
+            if not prod:
+                continue
+
+            if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
+                qty = _parse_qty(num_raw, unit_raw)   # kg
+                if qty > 0:
+                    items.append((prod, qty, "kg"))
+            else:
+                # Si no pone unidad aquí, casi siempre ya lo normalizamos antes (e.g. 0.5 kg),
+                # pero por coherencia: interpretamos como unidades.
+                qty = _to_units_number(num_raw)
+                if qty > 0:
+                    items.append((prod, qty, "u"))
             continue
 
-        # Intento 4: "pollo medio" (asumimos kg si no hay unidad)
+        # 4) "pollo medio" -> asumimos kg (ya lo estabas forzando con _parse_qty(..., "kg"))
         m = re.match(
             r"(?P<prod>[a-záéíóúñü\s\-]+)\s+(?P<num>medio|media|1/2|cuarto|1/4|tres\s+cuartos|3/4)$",
             seg, re.I
         )
         if m:
-            qty = _parse_qty(m.group("num"), "kg")
+            qty = _parse_qty(m.group("num"), "kg")   # kg
             prod = _canonicalizar_producto(m.group("prod"), keys)
             if prod and qty > 0:
-                items.append((prod, qty))
+                items.append((prod, qty, "kg"))
             continue
 
-        # Intento 5: unidades sueltas ("2 hamburguesas", "un arroz", "1 paella")
+        # 5) Unidades/piezas: "2 hamburguesas", "1 paella", "dos filetes"
         m = _PAT_UNIDADES_PIEZAS.match(seg)
         if m:
             num_raw = m.group("num").lower()
             qty = float(_NUM_TXT.get(num_raw, num_raw)) if num_raw in _NUM_TXT else float(num_raw)
             prod = _canonicalizar_producto(m.group("prod"), keys)
             if prod and qty > 0:
-                items.append((prod, qty))
+                items.append((prod, qty, "u"))
             continue
 
     return items
