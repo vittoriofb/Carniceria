@@ -2,7 +2,7 @@
 import re
 from thefuzz import process, fuzz
 import unicodedata
-from fuzzywuzzy import fuzz, process
+from difflib import SequenceMatcher
 
 
 # --- Normalización de expresiones de fecha/hora típicas de WhatsApp ---
@@ -230,50 +230,48 @@ def _strip_accents(s: str) -> str:
     return unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("utf-8")
 
 
-def _buscar_producto_fuzzy(nombre: str, productos_db_keys, threshold=75):
+def _similaridad(a: str, b: str) -> float:
+    """Devuelve la similitud entre dos cadenas usando ratio de difflib."""
+    return SequenceMatcher(None, a, b).ratio()
+
+def _buscar_producto_fuzzy(texto: str, productos_db: dict) -> str | None:
     """
-    Busca el producto más parecido dentro de productos_db usando:
+    Busca un producto en la base de datos:
     1. Coincidencia exacta
     2. Coincidencia por palabras clave
-    3. Fuzzy matching con penalización por longitud
-    Devuelve la clave original del catálogo.
+    3. Fuzzy con penalización por longitud
     """
-    if not nombre:
-        return None
+    texto = texto.lower().strip()
+    productos = list(productos_db.keys())
 
-    # Normalizar entrada
-    query = _strip_accents(nombre).lower().strip()
-    choices_orig = list(productos_db_keys)
-    choices_norm = [_strip_accents(c).lower() for c in choices_orig]
+    # --- 1) Coincidencia exacta completa
+    for p in productos:
+        if texto == p.lower():
+            return p
 
-    # --- 1) Coincidencia exacta
-    for orig, norm in zip(choices_orig, choices_norm):
-        if query == norm:
-            return orig
+    # --- 2) Coincidencia por palabras clave (todas las palabras deben aparecer)
+    for p in productos:
+        if all(word in p.lower() for word in texto.split()):
+            return p
 
-    # --- 2) Coincidencia por palabras clave
-    query_words = query.split()
-    for orig, norm in zip(choices_orig, choices_norm):
-        if all(word in norm for word in query_words):
-            return orig
-
-    # --- 3) Fuzzy con penalización de longitud
-    mejor_match = None
+    # --- 3) Fuzzy matching con penalización por longitud
+    mejor = None
     mejor_score = 0
-    for orig, norm in zip(choices_orig, choices_norm):
-        score = fuzz.WRatio(query, norm)
+    for p in productos:
+        score = _similaridad(texto, p.lower())
 
-        # Penalización por diferencia de longitud
-        long_diff = abs(len(norm) - len(query))
-        penalizacion = 1 - (long_diff / max(len(norm), len(query), 1))
-        score = score * penalizacion
+        # Penalización si la diferencia de longitud es grande
+        long_diff = abs(len(p) - len(texto))
+        penalizacion = 1 - (long_diff / max(len(p), len(texto), 1))
+        score *= penalizacion
 
         if score > mejor_score:
             mejor_score = score
-            mejor_match = orig
+            mejor = p
 
-    if mejor_match and mejor_score >= threshold:
-        return mejor_match
+    # Devuelve solo si realmente es suficientemente parecido
+    if mejor and mejor_score > 0.55:  # puedes ajustar este cutoff
+        return mejor
 
     return None
 
