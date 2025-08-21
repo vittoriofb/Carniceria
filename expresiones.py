@@ -2,7 +2,7 @@
 import re
 from thefuzz import process, fuzz
 import unicodedata
-from difflib import SequenceMatcher
+from difflib import SequenceMatcher, get_close_matches
 
 
 # --- Normalización de expresiones de fecha/hora típicas de WhatsApp ---
@@ -230,6 +230,8 @@ def _strip_accents(s: str) -> str:
     return unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("utf-8")
 
 
+from difflib import SequenceMatcher, get_close_matches
+
 def _similaridad(a: str, b: str) -> float:
     """Devuelve la similitud entre dos cadenas usando ratio de difflib."""
     return SequenceMatcher(None, a, b).ratio()
@@ -240,16 +242,18 @@ def _buscar_producto_fuzzy(texto: str, productos_db: dict) -> str | None:
     1. Coincidencia exacta
     2. Coincidencia por palabras clave
     3. Fuzzy con penalización por longitud
+    4. Get_close_matches como último recurso
     """
     texto = texto.lower().strip()
     productos = list(productos_db.keys())
+    productos_lower = [p.lower() for p in productos]
 
     # --- 1) Coincidencia exacta completa
     for p in productos:
         if texto == p.lower():
             return p
 
-    # --- 2) Coincidencia por palabras clave (todas las palabras deben aparecer)
+    # --- 2) Coincidencia por palabras clave
     for p in productos:
         if all(word in p.lower() for word in texto.split()):
             return p
@@ -259,8 +263,6 @@ def _buscar_producto_fuzzy(texto: str, productos_db: dict) -> str | None:
     mejor_score = 0
     for p in productos:
         score = _similaridad(texto, p.lower())
-
-        # Penalización si la diferencia de longitud es grande
         long_diff = abs(len(p) - len(texto))
         penalizacion = 1 - (long_diff / max(len(p), len(texto), 1))
         score *= penalizacion
@@ -269,9 +271,14 @@ def _buscar_producto_fuzzy(texto: str, productos_db: dict) -> str | None:
             mejor_score = score
             mejor = p
 
-    # Devuelve solo si realmente es suficientemente parecido
-    if mejor and mejor_score > 0.55:  # puedes ajustar este cutoff
+    if mejor and mejor_score > 0.55:  # cutoff ajustable
         return mejor
+
+    # --- 4) Último recurso: get_close_matches
+    sugerencias = get_close_matches(texto, productos_lower, n=1, cutoff=0.5)
+    if sugerencias:
+        idx = productos_lower.index(sugerencias[0])
+        return productos[idx]
 
     return None
 
