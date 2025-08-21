@@ -416,14 +416,14 @@ def process_message(data):
                         return f"{', '.join(añadidos)} añadido(s).\nCarrito actual:\n{mostrar_carrito(session)}"
 
                 # >>> Manejar eliminar productos (igual que antes)
-                if msg.startswith("eliminar "):
-                    producto = msg.replace("eliminar ", "").strip()
-                    prod_real = _buscar_producto_fuzzy(producto, PRODUCTOS_DB)
-                    if prod_real and prod_real in session["carrito"]:
-                        session["carrito"].pop(prod_real)
-                        return f"{prod_real} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
-                    else:
-                        return f"No tienes {producto} en tu carrito."
+                if re.match(r"^(eliminar|elimina|quita|borra)\b", msg):
+                        producto = re.sub(r"^(eliminar|elimina|quita|borra)\s+", "", msg).strip()
+                        prod_real = _buscar_producto_fuzzy(producto, PRODUCTOS_DB)
+                        if prod_real and prod_real in session["carrito"]:
+                            session["carrito"].pop(prod_real)
+                            return f"{prod_real} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
+                        else:
+                            return f"No tienes {producto} en tu carrito."
 
                 # >>> Manejar "listo" (igual)
                 if msg == "listo":

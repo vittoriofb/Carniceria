@@ -2,6 +2,7 @@
 import re
 from thefuzz import process, fuzz
 import unicodedata
+from fuzzywuzzy import fuzz, process
 
 
 # --- Normalización de expresiones de fecha/hora típicas de WhatsApp ---
@@ -231,25 +232,51 @@ def _strip_accents(s: str) -> str:
 
 def _buscar_producto_fuzzy(nombre: str, productos_db_keys, threshold=75):
     """
-    Busca el producto más parecido dentro de productos_db usando fuzzy matching.
+    Busca el producto más parecido dentro de productos_db usando:
+    1. Coincidencia exacta
+    2. Coincidencia por palabras clave
+    3. Fuzzy matching con penalización por longitud
     Devuelve la clave original del catálogo.
     """
     if not nombre:
         return None
 
+    # Normalizar entrada
+    query = _strip_accents(nombre).lower().strip()
     choices_orig = list(productos_db_keys)
     choices_norm = [_strip_accents(c).lower() for c in choices_orig]
-    query = _strip_accents(nombre).lower()
 
-    res = process.extractOne(query, choices_norm, scorer=fuzz.WRatio)
-    if not res:
-        return None
-    match_norm, score = res
-    if score < threshold:
-        return None
+    # --- 1) Coincidencia exacta
+    for orig, norm in zip(choices_orig, choices_norm):
+        if query == norm:
+            return orig
 
-    idx = choices_norm.index(match_norm)
-    return choices_orig[idx]
+    # --- 2) Coincidencia por palabras clave
+    query_words = query.split()
+    for orig, norm in zip(choices_orig, choices_norm):
+        if all(word in norm for word in query_words):
+            return orig
+
+    # --- 3) Fuzzy con penalización de longitud
+    mejor_match = None
+    mejor_score = 0
+    for orig, norm in zip(choices_orig, choices_norm):
+        score = fuzz.WRatio(query, norm)
+
+        # Penalización por diferencia de longitud
+        long_diff = abs(len(norm) - len(query))
+        penalizacion = 1 - (long_diff / max(len(norm), len(query), 1))
+        score = score * penalizacion
+
+        if score > mejor_score:
+            mejor_score = score
+            mejor_match = orig
+
+    if mejor_match and mejor_score >= threshold:
+        return mejor_match
+
+    return None
+
 
 
 def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
