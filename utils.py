@@ -15,15 +15,16 @@ SESSIONS = {}
 def formatear_item(prod: str, cantidad: float, productos_db: dict) -> str:
     """Devuelve un string con el formato correcto según la categoría del producto."""
     categoria = productos_db.get(prod, "kg")
-    if categoria == "otro":
+    if categoria == "Otros":
         unidades = int(cantidad)
         return f"{prod.capitalize()}: {unidades} unidad{'es' if unidades != 1 else ''}"
-    else:
-        # Redondear cantidades si procede
+    elif categoria == "kg":
         cantidad_fmt = f"{cantidad:.2f}".rstrip("0").rstrip(".")
         return f"{prod.capitalize()}: {cantidad_fmt} kg"
+    else:
+        return f"{prod.capitalize()}: {cantidad}"
 
-
+# Función para mostrar el carrito completo
 def mostrar_carrito(session):
     if not session["carrito"]:
         return "Carrito vacío."
@@ -112,6 +113,18 @@ def parse_dia_hora(texto: str):
         if not (0 <= h <= 23 and 0 <= m <= 59):
             raise ValueError("Hora inválida.")
         return h, m
+
+    # Caso especial: "a las HH(:MM)?" sin día explícito
+    m = re.match(r"^a\s+las\s+(\d{1,2})(?::([0-5]\d))?$", s)
+    if m:
+        hh, mm = m.groups()
+        hh, mm = _hhmm(hh, mm)
+        fecha = ahora.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        # si ya pasó hoy, lo ponemos mañana
+        if fecha <= ahora:
+            fecha += timedelta(days=1)
+        return fecha
+
 
     # 0) hoy/mañana/pasado mañana con tramo del día (incluye 'por la' y 'al')
     m = re.match(r"^(hoy|mañana|pasado mañana)(?:\s+(?:por\s+la|al))?\s+(mañana|tarde|noche|mediod[ií]a)$", s)
@@ -202,6 +215,7 @@ def parse_dia_hora(texto: str):
 
     raise ValueError("Formato no reconocido.")
 
+    
 
 
     
@@ -342,7 +356,7 @@ def process_message(data):
                             "• mañana a las 12:30\n"
                             "• este viernes por la tarde\n")
 
-            # Paso 3: Añadir o eliminar productos
+            # Ejemplo de manejo del paso 3: añadir/eliminar productos
             if session["paso"] == 3:
 
                 # >>> Detectar múltiples productos en un solo mensaje
@@ -350,20 +364,24 @@ def process_message(data):
                 if encontrados:
                     añadidos = []
                     for prod, cantidad in encontrados:
-                        # Fuzzy matching para que sea más humano
                         prod_real = _buscar_producto_fuzzy(prod, PRODUCTOS_DB)
                         if not prod_real:
-                            continue  # ignorar si no lo reconoce
+                            continue
+
                         categoria = PRODUCTOS_DB[prod_real]
-                        if categoria == "otro":
-                            cantidad = 1.0  # solo permitir unidades
+
+                        # Si es 'otro' o no se especifica kilos, forzar unidades
+                        if categoria == "otro" or cantidad < 1:
+                            cantidad = 1.0
+
+                        # Sumar cantidad al carrito
                         session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
-                        # Usamos formatear_item para uniformidad
                         añadidos.append(formatear_item(prod_real, cantidad, PRODUCTOS_DB))
+
                     if añadidos:
                         return f"{', '.join(añadidos)} añadido(s).\nCarrito actual:\n{mostrar_carrito(session)}"
 
-                # >>> Manejar eliminar
+                # >>> Manejar eliminar productos
                 if msg.startswith("eliminar "):
                     producto = msg.replace("eliminar ", "").strip()
                     prod_real = _buscar_producto_fuzzy(producto, PRODUCTOS_DB)
@@ -383,14 +401,14 @@ def process_message(data):
                             f"{carrito_formateado}\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
-                # >>> Último intento: producto único flexible
+                # >>> Producto único flexible
                 unico = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if len(unico) == 1:
                     prod, cantidad = unico[0]
                     prod_real = _buscar_producto_fuzzy(prod, PRODUCTOS_DB)
                     if prod_real:
                         categoria = PRODUCTOS_DB[prod_real]
-                        if categoria == "otro":
+                        if categoria == "otro" or cantidad < 1:
                             cantidad = 1.0
                         session["carrito"][prod_real] = session["carrito"].get(prod_real, 0) + cantidad
                         return f"{formatear_item(prod_real, cantidad, PRODUCTOS_DB)} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
