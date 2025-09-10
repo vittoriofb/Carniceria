@@ -352,7 +352,9 @@ def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
         return best
 
     # 3) fallback fuzzy
-    return _buscar_producto_fuzzy(prod_raw, productos_db_keys)
+    # 3) búsqueda inteligente
+    return _buscar_producto_fuzzy(prod_raw)
+
 
 
 def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float, str]]:
