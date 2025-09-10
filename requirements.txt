@@ -12,4 +12,3 @@ fuzzywuzzy
 rapidfuzz
 sentence-transformers 
 faiss-cpu 
-openai
