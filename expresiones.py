@@ -8,6 +8,15 @@ import re
 from rapidfuzz import fuzz
 
 
+import numpy as np
+import faiss
+from sentence_transformers import SentenceTransformer
+from rapidfuzz import process
+
+from data import PRODUCTOS_DB
+
+
+
 # --- Normalización de expresiones de fecha/hora típicas de WhatsApp ---
 
 _H_RE = re.compile(r"\b(\d{1,2})\s*h(?:s|rs)?\b", re.I)                       # 15h -> 15:00
@@ -243,112 +252,70 @@ def _preprocesar(texto: str) -> list[str]:
     palabras = [w for w in texto.split() if w not in STOPWORDS]
     return palabras
 
-# Normalización robusta
 def _normalize(text: str) -> str:
-    if not text:
-        return ""
-    t = unidecode(text.lower())
-    # dejamos letras, números, espacios y guiones
-    t = re.sub(r"[^a-z0-9\s\-]", " ", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
+    """Convierte texto a minúsculas, sin acentos y sin caracteres extraños."""
+    text = text.lower().strip()
+    text = unidecode(text)
+    text = re.sub(r"[^a-z0-9\s]", "", text)  # deja solo letras/números/espacios
+    text = re.sub(r"\s+", " ", text)         # colapsa espacios múltiples
+    return text
 
-# Extraer "head" (lo principal antes de preposiciones/complements)
-def _get_head(product_name: str) -> str:
-    if not product_name:
-        return ""
-    s = _normalize(product_name)
-    # cortar en conjunciones/preposiciones habituales para quedarse con la parte principal
-    parts = re.split(r'\b(?:de|del|con|rellen[ao]s?|relleno|al|a la|a los|a las|en|para|con\s+salsa)\b', s, flags=re.I)
-    left = parts[0].strip()
-    if not left:
-        left = s
-    head = left.split()[0] if left.split() else left
-    return head
+# --- Inicialización ---
+# 1. Índice normalizado
+INDEX_NORMALIZADO = { _normalize(k): k for k in PRODUCTOS_DB }
 
-# Versión mejorada y robusta de búsqueda
-def _buscar_producto_fuzzy(texto: str, productos_db) -> str | None:
-    from main import INDEX_NORMALIZADO  # 👈 importa el índice global
-    norm_input_full = _normalize(texto)
+# 2. Modelo de embeddings
+MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+productos = list(PRODUCTOS_DB.keys())
+embeddings = MODEL.encode(productos, convert_to_numpy=True, normalize_embeddings=True)
 
-    # 0) Coincidencia exacta con índice
-    if norm_input_full in INDEX_NORMALIZADO:
-        return INDEX_NORMALIZADO[norm_input_full]
-    # acepta dict o lista de keys
-    keys = list(productos_db.keys()) if hasattr(productos_db, "keys") else list(productos_db)
+# 3. Índice FAISS para similitud semántica
+d = embeddings.shape[1]
+index = faiss.IndexFlatIP(d)
+index.add(embeddings)
 
-    if not texto:
-        return None
+def _buscar_producto_fuzzy(texto: str) -> str | None:
+    """Pipeline inteligente para encontrar el producto más probable."""
+    norm_input = _normalize(texto)
 
-    norm_input_full = _normalize(texto)                     # para coincidencia exacta
-    input_tokens = [w for w in norm_input_full.split() if w and w not in STOPWORDS]  # tokens limpios
-    input_join = " ".join(input_tokens)
+    # 1) Exact match
+    if norm_input in INDEX_NORMALIZADO:
+        return INDEX_NORMALIZADO[norm_input]
 
-    # 0) Match exacto (normalizado) => 100% seguro
-    # build an index rápido (podrías cachearlo fuera de la función)
-    for k in keys:
-        if _normalize(k) == norm_input_full:
-            return k
+    # 2) Fuzzy (rapidfuzz)
+    best, score, _ = process.extractOne(texto, productos)
+    if score > 90:  # ajusta el umbral
+        return best
 
-    # 0.1) también chequeo sin espacios extras / accents directos
-    for k in keys:
-        if unidecode(k.lower()).strip() == unidecode(texto.lower()).strip():
-            return k
+    # 3) Embeddings semánticos
+    q_emb = MODEL.encode([texto], convert_to_numpy=True, normalize_embeddings=True)
+    scores, idxs = index.search(q_emb, 1)
+    best_idx = idxs[0][0]
+    best_score = float(scores[0][0])
+    if best_score > 0.65:  # cutoff semántico
+        return productos[best_idx]
 
-    # 1) Si el usuario escribió una sola palabra: buscar por "head" (la palabra principal del producto)
-    if len(input_tokens) == 1:
-        token = input_tokens[0]
-        candidates = [k for k in keys if _get_head(k) == token]
-        if candidates:
-            # elegir el producto con menos palabras (más genérico / corto)
-            candidates.sort(key=lambda x: len(_preprocesar(x)))
-            return candidates[0]
+    # 4) Fallback LLM (opcional)
+    # aquí solo si tienes clave de OpenAI configurada en tu entorno
+    try:
+        import openai
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        prompt = f"""
+        El cliente escribió: "{texto}"
+        La lista de productos es: {productos}
+        Elige el producto más parecido o devuelve "None" si no aplica.
+        """
+        resp = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        answer = resp["choices"][0]["message"]["content"].strip()
+        if answer in productos:
+            return answer
+    except Exception as e:
+        print("⚠️ LLM fallback no disponible:", e)
 
-    # 2) Coincidencia por inclusión de todas las palabras (si el input tiene varias palabras)
-    if input_tokens:
-        exact_word_matches = []
-        for k in keys:
-            p_words = set(_preprocesar(k))
-            if set(input_tokens) <= p_words:
-                exact_word_matches.append(k)
-        if exact_word_matches:
-            exact_word_matches.sort(key=lambda x: len(_preprocesar(x)))  # preferir nombres más cortos
-            return exact_word_matches[0]
-
-    # 3) Fallback fuzzy (rapidfuzz) con penalización por "palabras extra"
-    mejor = None
-    mejor_score = 0.0
-    for k in keys:
-        p_norm = " ".join(_preprocesar(k))
-        if not p_norm:
-            continue
-
-        # uso token_set_ratio para ignorar orden y duplicados
-        base = fuzz.token_set_ratio(input_join, p_norm, score_cutoff=0) / 100.0
-
-        # penalizar si el producto tiene muchas palabras que NO están en la query
-        p_words = _preprocesar(k)
-        extra = len(set(p_words) - set(input_tokens))
-        # Factor de penalización: cuanto más extra, más baja la puntuación.
-        penal = 1.0 / (1.0 + extra * 0.6)   # ajustable
-        score = base * penal
-
-        # pequeño bonus si el producto empieza por la token buscada (ayuda en casos 'pollo' vs 'muslitos...')
-        if len(input_tokens) == 1 and _preprocesar(k):
-            if _preprocesar(k)[0] == input_tokens[0]:
-                score += 0.12
-
-        # preferir productos cortos cuando el input es corto
-        if len(input_tokens) <= 2:
-            score *= 1.0 / (1.0 + max(0, len(p_words) - len(input_tokens)) * 0.15)
-
-        if score > mejor_score:
-            mejor_score = score
-            mejor = k
-
-    # cutoff final (ajustable). 0.40 es un punto de partida razonable
-    if mejor_score >= 0.40:
-        return mejor
     return None
 
 
