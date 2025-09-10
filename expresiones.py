@@ -274,7 +274,7 @@ SYNONYMS = {
 }
 
 # --- Función de búsqueda ligera
-def _buscar_producto_fuzzy_lite(texto: str) -> str | None:
+def _buscar_producto_fuzzy(texto: str) -> str | None:
     norm_input = _normalize(texto)
 
     # 1) Exact match
@@ -327,7 +327,7 @@ def _canonicalizar_producto(prod_raw: str) -> str | None:
         return best
 
     # 4) Fallback fuzzy
-    return _buscar_producto_fuzzy_lite(prod_raw)
+    return _buscar_producto_fuzzy(prod_raw)
 
 
 
