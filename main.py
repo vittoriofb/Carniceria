@@ -4,8 +4,14 @@ import logging
 import os
 import html
 
+from data import PRODUCTOS_DB
+from expresiones import _normalize
+
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
+
+# --- Crear índice normalizado ---
+INDEX_NORMALIZADO = { _normalize(k): k for k in PRODUCTOS_DB }
 
 @app.route("/webhook", methods=["POST"])
 def webhook():

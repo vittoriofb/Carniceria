@@ -4,6 +4,8 @@ from thefuzz import process, fuzz
 import unicodedata
 from difflib import SequenceMatcher, get_close_matches
 from unidecode import unidecode
+import re
+from rapidfuzz import fuzz
 
 
 # --- Normalización de expresiones de fecha/hora típicas de WhatsApp ---
@@ -241,52 +243,113 @@ def _preprocesar(texto: str) -> list[str]:
     palabras = [w for w in texto.split() if w not in STOPWORDS]
     return palabras
 
-def _buscar_producto_fuzzy(texto: str, productos_db: dict) -> str | None:
-    texto_norm = _preprocesar(texto)
-    texto_set = set(texto_norm)
-    productos = list(productos_db.keys())
+# Normalización robusta
+def _normalize(text: str) -> str:
+    if not text:
+        return ""
+    t = unidecode(text.lower())
+    # dejamos letras, números, espacios y guiones
+    t = re.sub(r"[^a-z0-9\s\-]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
 
-    # --- 1) Coincidencia exacta de nombre
-    for p in productos:
-        if texto.lower().strip() == p.lower().strip():
-            return p
+# Extraer "head" (lo principal antes de preposiciones/complements)
+def _get_head(product_name: str) -> str:
+    if not product_name:
+        return ""
+    s = _normalize(product_name)
+    # cortar en conjunciones/preposiciones habituales para quedarse con la parte principal
+    parts = re.split(r'\b(?:de|del|con|rellen[ao]s?|relleno|al|a la|a los|a las|en|para|con\s+salsa)\b', s, flags=re.I)
+    left = parts[0].strip()
+    if not left:
+        left = s
+    head = left.split()[0] if left.split() else left
+    return head
 
-    # --- 2) Coincidencia exacta de palabra clave (ej. "pollo" dentro de "Pollo Entero")
-    if len(texto_norm) == 1:  # caso de input corto, una palabra
-        for p in productos:
-            p_words = set(_preprocesar(p))
-            if texto_norm[0] in p_words:
-                return p
+# Versión mejorada y robusta de búsqueda
+def _buscar_producto_fuzzy(texto: str, productos_db) -> str | None:
+    from main import INDEX_NORMALIZADO  # 👈 importa el índice global
+    norm_input_full = _normalize(texto)
 
-    # --- 3) Coincidencia por inclusión de todas las palabras
-    for p in productos:
-        p_words = set(_preprocesar(p))
-        if texto_set <= p_words:
-            return p
+    # 0) Coincidencia exacta con índice
+    if norm_input_full in INDEX_NORMALIZADO:
+        return INDEX_NORMALIZADO[norm_input_full]
+    # acepta dict o lista de keys
+    keys = list(productos_db.keys()) if hasattr(productos_db, "keys") else list(productos_db)
 
-    # --- 4) Fuzzy matching con penalización fuerte por "palabras de más"
+    if not texto:
+        return None
+
+    norm_input_full = _normalize(texto)                     # para coincidencia exacta
+    input_tokens = [w for w in norm_input_full.split() if w and w not in STOPWORDS]  # tokens limpios
+    input_join = " ".join(input_tokens)
+
+    # 0) Match exacto (normalizado) => 100% seguro
+    # build an index rápido (podrías cachearlo fuera de la función)
+    for k in keys:
+        if _normalize(k) == norm_input_full:
+            return k
+
+    # 0.1) también chequeo sin espacios extras / accents directos
+    for k in keys:
+        if unidecode(k.lower()).strip() == unidecode(texto.lower()).strip():
+            return k
+
+    # 1) Si el usuario escribió una sola palabra: buscar por "head" (la palabra principal del producto)
+    if len(input_tokens) == 1:
+        token = input_tokens[0]
+        candidates = [k for k in keys if _get_head(k) == token]
+        if candidates:
+            # elegir el producto con menos palabras (más genérico / corto)
+            candidates.sort(key=lambda x: len(_preprocesar(x)))
+            return candidates[0]
+
+    # 2) Coincidencia por inclusión de todas las palabras (si el input tiene varias palabras)
+    if input_tokens:
+        exact_word_matches = []
+        for k in keys:
+            p_words = set(_preprocesar(k))
+            if set(input_tokens) <= p_words:
+                exact_word_matches.append(k)
+        if exact_word_matches:
+            exact_word_matches.sort(key=lambda x: len(_preprocesar(x)))  # preferir nombres más cortos
+            return exact_word_matches[0]
+
+    # 3) Fallback fuzzy (rapidfuzz) con penalización por "palabras extra"
     mejor = None
-    mejor_score = 0
-    for p in productos:
-        p_words = _preprocesar(p)
+    mejor_score = 0.0
+    for k in keys:
+        p_norm = " ".join(_preprocesar(k))
+        if not p_norm:
+            continue
 
-        # similitud base
-        score = _similaridad(" ".join(texto_norm), " ".join(p_words))
+        # uso token_set_ratio para ignorar orden y duplicados
+        base = fuzz.token_set_ratio(input_join, p_norm, score_cutoff=0) / 100.0
 
-        # penalización fuerte si el producto tiene muchas más palabras que el input
-        len_diff = abs(len(p_words) - len(texto_norm))
-        score *= max(0.0, 1 - (len_diff * 0.5) / max(len(p_words), len(texto_norm), 1))
+        # penalizar si el producto tiene muchas palabras que NO están en la query
+        p_words = _preprocesar(k)
+        extra = len(set(p_words) - set(input_tokens))
+        # Factor de penalización: cuanto más extra, más baja la puntuación.
+        penal = 1.0 / (1.0 + extra * 0.6)   # ajustable
+        score = base * penal
 
-        # penalización por palabras que no aparecen en el input
-        extra_words = set(p_words) - texto_set
-        if extra_words:
-            score *= max(0.0, 1 - len(extra_words) / (len(p_words) * 1.5))
+        # pequeño bonus si el producto empieza por la token buscada (ayuda en casos 'pollo' vs 'muslitos...')
+        if len(input_tokens) == 1 and _preprocesar(k):
+            if _preprocesar(k)[0] == input_tokens[0]:
+                score += 0.12
+
+        # preferir productos cortos cuando el input es corto
+        if len(input_tokens) <= 2:
+            score *= 1.0 / (1.0 + max(0, len(p_words) - len(input_tokens)) * 0.15)
 
         if score > mejor_score:
             mejor_score = score
-            mejor = p
+            mejor = k
 
-    return mejor if mejor_score >= 0.45 else None
+    # cutoff final (ajustable). 0.40 es un punto de partida razonable
+    if mejor_score >= 0.40:
+        return mejor
+    return None
 
 
 
