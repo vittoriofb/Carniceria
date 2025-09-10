@@ -10,5 +10,3 @@ python-Levenshtein
 unidecode
 fuzzywuzzy
 rapidfuzz
-sentence-transformers 
-faiss-cpu 

@@ -264,76 +264,72 @@ def _normalize(text: str) -> str:
 # 1. Índice normalizado
 INDEX_NORMALIZADO = { _normalize(k): k for k in PRODUCTOS_DB }
 
-# 2. Modelo de embeddings
-MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-productos = list(PRODUCTOS_DB.keys())
-embeddings = MODEL.encode(productos, convert_to_numpy=True, normalize_embeddings=True)
+SYNONYMS = {
+    "pollo para asar": "Pollo entero",
+    "muslitos rellenos de espinacas": "Muslitos de pollo rellenos de espinacas con queso de cabra, dátiles y cebolla confitada",
+    "muslitos rellenos de queso": "Muslitos de pollo rellenos de queso brie, manzana  y nueces",
+    "pechuga de pollo": "Filetes de pechuga entera",
+    "hamburguesa de polllo": "Hamburguesa clásica de polllo",  # arreglar errores típicos
+    "pavo entero": "Pavo entero",
+    "pavo medio": "Pavo medio",
+    # añade más alias según observaciones reales
+}
 
-# 3. Índice FAISS para similitud semántica
-d = embeddings.shape[1]
-index = faiss.IndexFlatIP(d)
-index.add(embeddings)
-
-def _buscar_producto_fuzzy(texto: str) -> str | None:
-    """Pipeline inteligente para encontrar el producto más probable."""
+# --- Función de búsqueda ligera
+def _buscar_producto_fuzzy_lite(texto: str) -> str | None:
     norm_input = _normalize(texto)
 
-    # 1) Coincidencia exacta (índice normalizado)
+    # 1) Exact match
     if norm_input in INDEX_NORMALIZADO:
         return INDEX_NORMALIZADO[norm_input]
 
-    # 2) Fuzzy (rapidfuzz)
-    best, score, _ = process.extractOne(texto, productos)
-    if score > 90:  # ajusta el umbral a tu gusto
-        return best
+    # 2) Sinónimos
+    if norm_input in SYNONYMS:
+        return SYNONYMS[norm_input]
 
-    # 3) Embeddings semánticos
-    q_emb = MODEL.encode([texto], convert_to_numpy=True, normalize_embeddings=True)
-    scores, idxs = index.search(q_emb, 1)
-    best_idx = idxs[0][0]
-    best_score = float(scores[0][0])
-    if best_score > 0.65:  # cutoff semántico (ajustable)
-        return productos[best_idx]
+    # 3) Fuzzy matching con RapidFuzz
+    best, score, _ = process.extractOne(texto, PRODUCTOS_DB)
+    if score > 90:  # umbral ajustable
+        return best
 
     return None
 
-
-
-
-def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
+# --- Función canonicalizar producto
+def _canonicalizar_producto(prod_raw: str) -> str | None:
     """
-    Devuelve la clave de producto más probable:
-    1) match exacto sin tildes,
-    2) coincidencia por subcadena (más larga),
-    3) fuzzy matching como fallback.
+    Devuelve el producto más probable:
+    1) Exact match
+    2) Subcadena más larga
+    3) Fuzzy / sinónimos
     """
-    prod = re.sub(r"[^a-záéíóúñü\s\-]", "", prod_raw.lower()).strip()
-    if not prod:
+    if not prod_raw:
         return None
 
-    keys = list(productos_db_keys)
-    prod_norm = _strip_accents(prod)
+    # Normalizar y limpiar
+    prod_norm = _normalize(prod_raw)
 
-    # 1) match exacto (sin tildes)
-    for k in keys:
-        if _strip_accents(k.lower()) == prod_norm:
-            return k
+    # 1) Exact match usando índice
+    if prod_norm in INDEX_NORMALIZADO:
+        return INDEX_NORMALIZADO[prod_norm]
 
-    # 2) coincidencia por subcadena (más larga)
+    # 2) Sinónimos
+    if prod_norm in SYNONYMS:
+        return SYNONYMS[prod_norm]
+
+    # 3) Coincidencia por subcadena (longest match)
     best = None
     best_len = -1
-    for k in keys:
-        k_norm = _strip_accents(k.lower())
-        if k_norm in prod_norm or prod_norm in k_norm:
-            if len(k_norm) > best_len:
-                best = k
-                best_len = len(k_norm)
+    for p in PRODUCTOS_DB:
+        p_norm = _normalize(p)
+        if prod_norm in p_norm or p_norm in prod_norm:
+            if len(p_norm) > best_len:
+                best = p
+                best_len = len(p_norm)
     if best:
         return best
 
-    # 3) fallback fuzzy
-    # 3) búsqueda inteligente
-    return _buscar_producto_fuzzy(prod_raw)
+    # 4) Fallback fuzzy
+    return _buscar_producto_fuzzy_lite(prod_raw)
 
 
 
