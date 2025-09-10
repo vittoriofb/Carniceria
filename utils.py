@@ -404,7 +404,7 @@ def process_message(data):
                 if encontrados:
                     añadidos = []
                     for prod, cantidad, unidad in encontrados:
-                        prod_real = _buscar_producto_fuzzy(prod, PRODUCTOS_DB)
+                        prod_real = _buscar_producto_fuzzy(prod)
                         if not prod_real:
                             continue
 
@@ -418,7 +418,7 @@ def process_message(data):
                 # >>> Manejar eliminar productos (igual que antes)
                 if re.match(r"^(eliminar|elimina|quita|borra)\b", msg):
                         producto = re.sub(r"^(eliminar|elimina|quita|borra)\s+", "", msg).strip()
-                        prod_real = _buscar_producto_fuzzy(producto, PRODUCTOS_DB)
+                        prod_real = _buscar_producto_fuzzy(producto)
                         if prod_real and prod_real in session["carrito"]:
                             session["carrito"].pop(prod_real)
                             return f"{prod_real} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
@@ -439,7 +439,7 @@ def process_message(data):
                 unico = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
                 if len(unico) == 1:
                     prod, cantidad, unidad = unico[0]
-                    prod_real = _buscar_producto_fuzzy(prod, PRODUCTOS_DB)
+                    prod_real = _buscar_producto_fuzzy(prod)
                     if prod_real:
                         agregar_item_carrito(session, prod_real, cantidad, unidad)
                         return f"{formatear_item_simple(prod_real, cantidad, unidad)} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
