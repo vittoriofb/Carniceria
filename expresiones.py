@@ -9,7 +9,6 @@ from rapidfuzz import fuzz
 
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from rapidfuzz import process
 
 from data import PRODUCTOS_DB
