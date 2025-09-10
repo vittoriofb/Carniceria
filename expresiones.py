@@ -293,7 +293,7 @@ def _buscar_producto_fuzzy(texto: str) -> str | None:
     return None
 
 # --- Función canonicalizar producto
-def _canonicalizar_producto(prod_raw: str) -> str | None:
+def _canonicalizar_producto(prod_raw: str, productos_db_keys=None) -> str | None:
     """
     Devuelve el producto más probable:
     1) Exact match
@@ -303,7 +303,7 @@ def _canonicalizar_producto(prod_raw: str) -> str | None:
     if not prod_raw:
         return None
 
-    # Normalizar y limpiar
+    keys = productos_db_keys or PRODUCTOS_DB  # si no pasas keys, usa el catálogo completo
     prod_norm = _normalize(prod_raw)
 
     # 1) Exact match usando índice
@@ -317,7 +317,7 @@ def _canonicalizar_producto(prod_raw: str) -> str | None:
     # 3) Coincidencia por subcadena (longest match)
     best = None
     best_len = -1
-    for p in PRODUCTOS_DB:
+    for p in keys:
         p_norm = _normalize(p)
         if prod_norm in p_norm or p_norm in prod_norm:
             if len(p_norm) > best_len:
