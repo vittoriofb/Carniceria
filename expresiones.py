@@ -9,7 +9,6 @@ from rapidfuzz import fuzz
 
 
 import numpy as np
-import faiss
 from sentence_transformers import SentenceTransformer
 from rapidfuzz import process
 
