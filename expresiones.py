@@ -251,12 +251,20 @@ def _preprocesar(texto: str) -> list[str]:
     return palabras
 
 def _normalize(text: str) -> str:
-    """Convierte texto a minúsculas, sin acentos y sin caracteres extraños."""
+    """Convierte texto a minúsculas, sin acentos, plurales ni caracteres raros."""
     text = text.lower().strip()
     text = unidecode(text)
-    text = re.sub(r"[^a-z0-9\s]", "", text)  # deja solo letras/números/espacios
-    text = re.sub(r"\s+", " ", text)         # colapsa espacios múltiples
-    return text
+    text = re.sub(r"[^a-z0-9\s]", " ", text)   # solo letras/números/espacios
+    text = re.sub(r"\s+", " ", text)           # colapsa espacios múltiples
+    palabras = []
+    for w in text.split():
+        if w in STOPWORDS:
+            continue
+        # quita plural simple
+        if w.endswith("s") and len(w) > 3:
+            w = w[:-1]
+        palabras.append(w)
+    return " ".join(palabras)
 
 # --- Inicialización ---
 # 1. Índice normalizado
@@ -264,71 +272,97 @@ INDEX_NORMALIZADO = { _normalize(k): k for k in PRODUCTOS_DB }
 
 SYNONYMS = {
     "pollo para asar": "Pollo entero",
-    "muslitos rellenos de espinacas": "Muslitos de pollo rellenos de espinacas con queso de cabra, dátiles y cebolla confitada",
-    "muslitos rellenos de queso": "Muslitos de pollo rellenos de queso brie, manzana  y nueces",
-    "pechuga de pollo": "Filetes de pechuga entera",
-    "hamburguesa de polllo": "Hamburguesa clásica de polllo",  # arreglar errores típicos
-    "pavo entero": "Pavo entero",
-    "pavo medio": "Pavo medio",
-    # añade más alias según observaciones reales
+    "pollo al horno": "Pollo entero",
+    "alita de pollo": "Alas de pollo",
+    "alita": "Alas de pollo",
+    "muslito relleno queso": "Muslitos de pollo rellenos de queso brie, manzana  y nueces",
+    "muslito relleno espinaca": "Muslitos de pollo rellenos de espinacas con queso de cabra, dátiles y cebolla confitada",
+    "pechuga": "Filetes de pechuga entera",
+    "pechuga pollo": "Filetes de pechuga entera",
+    "chuletón de vaca": "Super chuletón de vaca gallega madurada (1kg aprox)",
+    "chuleta de vaca": "Chuleta de ternera gallega",
+    "croquetas casera": "Surtido de croquetas caseras 12 unidades",
+    "croquetas pollo": "Croquetas de Pollo",
+    "hamburguesa barbacoa": "Hamburguesa BBQ barbacoa",
+    "hamburguesa clasica pollo": "Hamburguesa clásica de polllo",
+    "hamburguesa clasica ternera": "Hamburguesa clásica de ternera",
+    "cordero entero": "Cordero lechal entero",
+    "cordero medio": "Cordero lechal medio",
+    # puedes ir ampliando con lo que digan tus clientes
 }
 
 # --- Función de búsqueda ligera
-def _buscar_producto_fuzzy(texto: str) -> str | None:
+def _buscar_producto_fuzzy(texto: str, catalogo=None) -> str | None:
+    """Devuelve el producto más parecido o None (sin mensajes ni sugerencias)."""
+    if not texto:
+        return None
+
     norm_input = _normalize(texto)
 
     # 1) Exact match
-    if norm_input in INDEX_NORMALIZADO:
-        return INDEX_NORMALIZADO[norm_input]
+    for p in catalogo or PRODUCTOS_DB:
+        if norm_input == _normalize(p):
+            return p
 
     # 2) Sinónimos
     if norm_input in SYNONYMS:
         return SYNONYMS[norm_input]
 
-    # 3) Fuzzy matching con RapidFuzz
-    best, score, _ = process.extractOne(texto, PRODUCTOS_DB)
-    if score > 90:  # umbral ajustable
+    # 3) Fuzzy
+    best, score, _ = process.extractOne(texto, catalogo or PRODUCTOS_DB)
+    if score >= 85:
         return best
 
     return None
 
+# --------------------
+# FUNCION CONVERSACIONAL (cuando hablas con cliente directamente)
+# --------------------
+def buscar_producto_conversacional(pedido: str, catalogo=None) -> str:
+    resultado = _buscar_producto_fuzzy(pedido, catalogo or PRODUCTOS_DB)
+
+    if resultado:
+        return f"Perfecto 👍, te apunto: {resultado}"
+
+    # Si no hay match, proponemos sugerencias
+    sugerencias = [x[0] for x in process.extract(pedido, catalogo or PRODUCTOS_DB, limit=3)]
+    if sugerencias:
+        return f"No encontré '{pedido}'. ¿Quizás quisiste decir: {', '.join(sugerencias)}?"
+
+    return f"No he encontrado nada parecido a '{pedido}'."
 # --- Función canonicalizar producto
-def _canonicalizar_producto(prod_raw: str, productos_db_keys=None) -> str | None:
+def _canonicalizar_producto(prod_raw: str, productos_db) -> str | list[str] | None:
     """
-    Devuelve el producto más probable:
-    1) Exact match
-    2) Subcadena más larga
-    3) Fuzzy / sinónimos
+    Devuelve:
+    - El producto más probable (match directo, sinónimos, keywords o fuzzy).
+    - Una lista de sugerencias si no hay certeza.
     """
     if not prod_raw:
         return None
 
-    keys = productos_db_keys or PRODUCTOS_DB  # si no pasas keys, usa el catálogo completo
     prod_norm = _normalize(prod_raw)
 
-    # 1) Exact match usando índice
-    if prod_norm in INDEX_NORMALIZADO:
-        return INDEX_NORMALIZADO[prod_norm]
+    # 1) Exact match directo
+    if prod_norm in [_normalize(p) for p in productos_db]:
+        return next(p for p in productos_db if _normalize(p) == prod_norm)
 
     # 2) Sinónimos
     if prod_norm in SYNONYMS:
         return SYNONYMS[prod_norm]
 
-    # 3) Coincidencia por subcadena (longest match)
-    best = None
-    best_len = -1
-    for p in keys:
+    # 3) Coincidencia por palabras clave (todas deben estar presentes)
+    palabras = set(prod_norm.split())
+    candidatos = []
+    for p in productos_db:
         p_norm = _normalize(p)
-        if prod_norm in p_norm or p_norm in prod_norm:
-            if len(p_norm) > best_len:
-                best = p
-                best_len = len(p_norm)
-    if best:
-        return best
+        if all(w in p_norm for w in palabras):
+            candidatos.append(p)
+    if candidatos:
+        # prioriza el más largo (más descriptivo)
+        return sorted(candidatos, key=len, reverse=True)[0]
 
-    # 4) Fallback fuzzy
-    return _buscar_producto_fuzzy(prod_raw)
-
+    # 4) Fuzzy matching
+    return _buscar_producto_fuzzy(prod_raw, productos_db)
 
 
 def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float, str]]:
