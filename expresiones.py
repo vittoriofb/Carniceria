@@ -246,41 +246,48 @@ def _buscar_producto_fuzzy(texto: str, productos_db: dict) -> str | None:
     texto_set = set(texto_norm)
     productos = list(productos_db.keys())
 
-    # --- 1) Coincidencia exacta
+    # --- 1) Coincidencia exacta de nombre
     for p in productos:
         if texto.lower().strip() == p.lower().strip():
             return p
 
-    # --- 2) Coincidencia por palabras clave (todas las palabras del texto deben aparecer)
+    # --- 2) Coincidencia exacta de palabra clave (ej. "pollo" dentro de "Pollo Entero")
+    if len(texto_norm) == 1:  # caso de input corto, una palabra
+        for p in productos:
+            p_words = set(_preprocesar(p))
+            if texto_norm[0] in p_words:
+                return p
+
+    # --- 3) Coincidencia por inclusión de todas las palabras
     for p in productos:
         p_words = set(_preprocesar(p))
-        if texto_set <= p_words:  # todas las palabras del texto están en el producto
+        if texto_set <= p_words:
             return p
 
-    # --- 3) Fuzzy matching con penalización
+    # --- 4) Fuzzy matching con penalización fuerte por "palabras de más"
     mejor = None
     mejor_score = 0
     for p in productos:
         p_words = _preprocesar(p)
-        # similitud con difflib
+
+        # similitud base
         score = _similaridad(" ".join(texto_norm), " ".join(p_words))
 
-        # Penalización por diferencia de longitud
+        # penalización fuerte si el producto tiene muchas más palabras que el input
         len_diff = abs(len(p_words) - len(texto_norm))
-        score *= max(0.0, 1 - len_diff / max(len(p_words), len(texto_norm), 1))
+        score *= max(0.0, 1 - (len_diff * 0.5) / max(len(p_words), len(texto_norm), 1))
 
-        # Penalización por palabras extra
+        # penalización por palabras que no aparecen en el input
         extra_words = set(p_words) - texto_set
-        score *= max(0.0, 1 - len(extra_words) / max(len(p_words), 1))
+        if extra_words:
+            score *= max(0.0, 1 - len(extra_words) / (len(p_words) * 1.5))
 
         if score > mejor_score:
             mejor_score = score
             mejor = p
 
-    # Retorna solo si realmente es suficientemente parecido
-    if mejor_score >= 0.5:  # puedes ajustar el cutoff
-        return mejor
-    return None
+    return mejor if mejor_score >= 0.45 else None
+
 
 
 def _canonicalizar_producto(prod_raw: str, productos_db_keys) -> str | None:
