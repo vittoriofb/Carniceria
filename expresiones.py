@@ -278,13 +278,13 @@ def _buscar_producto_fuzzy(texto: str) -> str | None:
     """Pipeline inteligente para encontrar el producto más probable."""
     norm_input = _normalize(texto)
 
-    # 1) Exact match
+    # 1) Coincidencia exacta (índice normalizado)
     if norm_input in INDEX_NORMALIZADO:
         return INDEX_NORMALIZADO[norm_input]
 
     # 2) Fuzzy (rapidfuzz)
     best, score, _ = process.extractOne(texto, productos)
-    if score > 90:  # ajusta el umbral
+    if score > 90:  # ajusta el umbral a tu gusto
         return best
 
     # 3) Embeddings semánticos
@@ -292,31 +292,11 @@ def _buscar_producto_fuzzy(texto: str) -> str | None:
     scores, idxs = index.search(q_emb, 1)
     best_idx = idxs[0][0]
     best_score = float(scores[0][0])
-    if best_score > 0.65:  # cutoff semántico
+    if best_score > 0.65:  # cutoff semántico (ajustable)
         return productos[best_idx]
 
-    # 4) Fallback LLM (opcional)
-    # aquí solo si tienes clave de OpenAI configurada en tu entorno
-    try:
-        import openai
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        prompt = f"""
-        El cliente escribió: "{texto}"
-        La lista de productos es: {productos}
-        Elige el producto más parecido o devuelve "None" si no aplica.
-        """
-        resp = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        answer = resp["choices"][0]["message"]["content"].strip()
-        if answer in productos:
-            return answer
-    except Exception as e:
-        print("⚠️ LLM fallback no disponible:", e)
-
     return None
+
 
 
 
