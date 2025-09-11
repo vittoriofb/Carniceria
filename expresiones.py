@@ -331,13 +331,11 @@ def buscar_producto_conversacional(pedido: str, catalogo=None) -> str:
 
     return f"No he encontrado nada parecido a '{pedido}'."
 # --- Función canonicalizar producto
-from rapidfuzz import process
 
-def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 85) -> str | list[str] | None:
+def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 85) -> str | None:
     """
     Devuelve:
-    - El producto más probable (match directo o sinónimo).
-    - Una lista de sugerencias si hay ambigüedad.
+    - El producto más probable (match directo, sinónimo o fuzzy).
     - None si no hay coincidencias.
     """
 
@@ -353,18 +351,15 @@ def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 
 
     # 2) Sinónimos
     if prod_norm in SYNONYMS:
-        return SYNONYMS[prod_norm]
+        # Si hay varios sinónimos, tomamos el primero
+        synonym = SYNONYMS[prod_norm]
+        return synonym[0] if isinstance(synonym, list) else synonym
 
     # 3) Coincidencia por palabras clave (todas deben estar presentes)
     palabras = set(prod_norm.split())
     candidatos = [p for p in productos_db if all(w in _normalize(p) for w in palabras)]
-
     if candidatos:
-        if len(candidatos) == 1:
-            return candidatos[0]  # Certeza
-        else:
-            # Ambigüedad: devolvemos todas las opciones posibles
-            return candidatos
+        return candidatos[0]  # Tomamos la primera coincidencia para evitar listas
 
     # 4) Fuzzy matching
     if productos_db:
@@ -372,13 +367,13 @@ def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 
         if score >= fuzzy_threshold:
             return best_match
 
-        # Si no alcanza el umbral, podemos devolver top 3 sugerencias
+        # Tomamos la mejor sugerencia fuzzy aunque no alcance el umbral
         sugerencias = [p for p, s, _ in process.extract(prod_raw, productos_db, limit=3) if s >= 60]
         if sugerencias:
-            return sugerencias
+            return sugerencias[0]  # Primera sugerencia
 
     # 5) Nada encontrado
-    return None
+    return "Parece que no tenemos lo que pides, si quieres consultar el catálogo, escribe 'Ver catálogo'"
 
 
 
