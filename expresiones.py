@@ -431,14 +431,14 @@ def _canonicalizar_producto(prod_raw, productos_db, fuzzy_threshold: int = 85) -
 
 def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float, str]]:
     """
-    Extrae [(producto, cantidad, unidad), ...] desde un mensaje libre.
+    Extrae [(producto_crudo, cantidad, unidad), ...] desde un mensaje libre.
     - unidad: "kg" si el cliente dijo kg/g (se convierte a kg), "u" si habló de piezas.
     - Si NO se menciona 'kg'/'g', se asume unidades ("u").
+    - IMPORTANTE: Aquí NO canonicalizamos el producto, eso se hace luego en utils.py
     """
     if not texto:
         return []
 
-    keys = productos_db.keys() if hasattr(productos_db, "keys") else list(productos_db)
     raw = texto.strip().lower()
 
     # 0) Quitar fillers al INICIO (repetidos)
@@ -494,7 +494,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
         if m:
             qty_raw = m.group("qty")
             unit_raw = (m.group("unit") or "").lower()
-            prod = _canonicalizar_producto(m.group("prod"), keys)
+            prod = m.group("prod")   # 👈 producto crudo (sin canonicalizar)
             if not prod:
                 continue
 
@@ -503,7 +503,6 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                 if qty > 0:
                     items.append((prod, qty, "kg"))
             else:
-                # Sin unidad explícita -> tratamos como unidades/piezas
                 qty = _to_units_number(qty_raw)
                 if qty > 0:
                     items.append((prod, qty, "u"))
@@ -514,12 +513,12 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
         if m:
             qty_raw = m.group("qty")
             unit_raw = (m.group("unit") or "").lower()
-            prod = _canonicalizar_producto(m.group("prod"), keys)
+            prod = m.group("prod")
             if not prod:
                 continue
 
             if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
-                qty = _parse_qty(qty_raw, unit_raw)   # kg
+                qty = _parse_qty(qty_raw, unit_raw)
                 if qty > 0:
                     items.append((prod, qty, "kg"))
             else:
@@ -533,30 +532,28 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
         if m:
             num_raw = m.group("num")
             unit_raw = (m.group("unit") or "").lower()
-            prod = _canonicalizar_producto(m.group("prod"), keys)
+            prod = m.group("prod")
             if not prod:
                 continue
 
             if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
-                qty = _parse_qty(num_raw, unit_raw)   # kg
+                qty = _parse_qty(num_raw, unit_raw)
                 if qty > 0:
                     items.append((prod, qty, "kg"))
             else:
-                # Si no pone unidad aquí, casi siempre ya lo normalizamos antes (e.g. 0.5 kg),
-                # pero por coherencia: interpretamos como unidades.
                 qty = _to_units_number(num_raw)
                 if qty > 0:
                     items.append((prod, qty, "u"))
             continue
 
-        # 4) "pollo medio" -> asumimos kg (ya lo estabas forzando con _parse_qty(..., "kg"))
+        # 4) "pollo medio" -> asumimos kg
         m = re.match(
             r"(?P<prod>[a-záéíóúñü\s\-]+)\s+(?P<num>medio|media|1/2|cuarto|1/4|tres\s+cuartos|3/4)$",
             seg, re.I
         )
         if m:
-            qty = _parse_qty(m.group("num"), "kg")   # kg
-            prod = _canonicalizar_producto(m.group("prod"), keys)
+            qty = _parse_qty(m.group("num"), "kg")
+            prod = m.group("prod")
             if prod and qty > 0:
                 items.append((prod, qty, "kg"))
             continue
@@ -566,7 +563,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
         if m:
             num_raw = m.group("num").lower()
             qty = float(_NUM_TXT.get(num_raw, num_raw)) if num_raw in _NUM_TXT else float(num_raw)
-            prod = _canonicalizar_producto(m.group("prod"), keys)
+            prod = m.group("prod")
             if prod and qty > 0:
                 items.append((prod, qty, "u"))
             continue
