@@ -434,20 +434,29 @@ def _canonicalizar_producto(prod_raw, productos_db, fuzzy_threshold: int = 85) -
 
 
 def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float, str]]:
+    """
+    Extrae [(producto_crudo, cantidad, unidad), ...] desde un mensaje libre.
+    - unidad: "kg" si el cliente dijo kg/g (se convierte a kg), "u" si habló de piezas.
+    - Si NO se menciona 'kg'/'g', se asume unidades ("u").
+    """
+    
     if not texto:
         return []
 
     raw = texto.strip().lower()
+    print(f"Texto original: '{raw}'")
 
-    # 0) Quitar fillers al INICIO
-    prev = None
+    # 0) Quitar fillers al INICIO (repetidos)
     while True:
         nuevo = _FILLER_INICIO.sub("", raw).strip()
         if nuevo == raw:
             break
         raw = nuevo
+    print(f"Después de quitar fillers: '{raw}'")
 
-    raw = re.sub(r"(?:\s+de)?\s+\d{3,}\b$", "", raw)
+    # 0.1) Limpiar posible ruido numérico al final
+    raw = re.sub(r"\s+\d{3,}\b$", "", raw)
+    print(f"Después de quitar números largos al final: '{raw}'")
 
     # 1) Normalización de cantidades coloquiales
     reemplazos_qty = [
@@ -462,9 +471,13 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
     ]
     for pat, rep in reemplazos_qty:
         raw = re.sub(pat, rep, raw)
+    print(f"Después de normalizar cantidades: '{raw}'")
 
-    # 2) Trocear en segmentos por separadores
-    segmentos = [s for s in _SEP.split(raw) if s]
+    # 2) Trocear en segmentos por separadores (arreglado)
+    # Usamos solo separadores claros, no cortar palabras como 'de'
+    segmentos = [s.strip() for s in re.split(r",|;|\+|/", raw) if s.strip()]
+    print(f"Segmentos detectados: {segmentos}")
+
     items: list[tuple[str, float, str]] = []
 
     _KG_TOKENS = {"kg", "kilo", "kilos", "kgs"}
@@ -481,11 +494,10 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             return 0.0
 
     for seg in segmentos:
+        print(f"Procesando segmento: '{seg}'")
         seg = _FILLER_INICIO.sub("", seg).strip()
         if not seg:
             continue
-
-        print(f"Procesando segmento: '{seg}'")  # 🔹 Debug
 
         # 1) qty + [unit] + (de) + prod
         m = _PAT_QTY_DE_PROD.match(seg)
@@ -493,7 +505,9 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             qty_raw = m.group("qty")
             unit_raw = (m.group("unit") or "").lower()
             prod = m.group("prod")
-            print(f"Matched _PAT_QTY_DE_PROD: prod='{prod}', qty='{qty_raw}', unit='{unit_raw}'")  # 🔹 Debug
+            print(f"Matched _PAT_QTY_DE_PROD: prod='{prod}', qty='{qty_raw}', unit='{unit_raw}'")
+            if not prod:
+                continue
             if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
                 qty = _parse_qty(qty_raw, unit_raw)
                 if qty > 0:
@@ -510,7 +524,9 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             qty_raw = m.group("qty")
             unit_raw = (m.group("unit") or "").lower()
             prod = m.group("prod")
-            print(f"Matched _PAT_PROD_QTY: prod='{prod}', qty='{qty_raw}', unit='{unit_raw}'")  # 🔹 Debug
+            print(f"Matched _PAT_PROD_QTY: prod='{prod}', qty='{qty_raw}', unit='{unit_raw}'")
+            if not prod:
+                continue
             if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
                 qty = _parse_qty(qty_raw, unit_raw)
                 if qty > 0:
@@ -527,7 +543,9 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             num_raw = m.group("num")
             unit_raw = (m.group("unit") or "").lower()
             prod = m.group("prod")
-            print(f"Matched _PAT_NUM_TXT: prod='{prod}', num='{num_raw}', unit='{unit_raw}'")  # 🔹 Debug
+            print(f"Matched _PAT_NUM_TXT: prod='{prod}', num='{num_raw}', unit='{unit_raw}'")
+            if not prod:
+                continue
             if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
                 qty = _parse_qty(num_raw, unit_raw)
                 if qty > 0:
@@ -538,7 +556,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
                     items.append((prod, qty, "u"))
             continue
 
-        # 4) "pollo medio"
+        # 4) "producto medio"
         m = re.match(
             r"(?P<prod>[a-záéíóúñü\s\-]+)\s+(?P<num>medio|media|1/2|cuarto|1/4|tres\s+cuartos|3/4)$",
             seg, re.I
@@ -546,8 +564,8 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
         if m:
             qty = _parse_qty(m.group("num"), "kg")
             prod = m.group("prod")
-            print(f"Matched regex 4: prod='{prod}', qty='{qty}'")  # 🔹 Debug
             if prod and qty > 0:
+                print(f"Matched 'producto medio': prod='{prod}', qty={qty}")
                 items.append((prod, qty, "kg"))
             continue
 
@@ -557,12 +575,12 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
             num_raw = m.group("num").lower()
             qty = float(_NUM_TXT.get(num_raw, num_raw)) if num_raw in _NUM_TXT else float(num_raw)
             prod = m.group("prod")
-            print(f"Matched _PAT_UNIDADES_PIEZAS: prod='{prod}', qty='{qty}'")  # 🔹 Debug
             if prod and qty > 0:
+                print(f"Matched _PAT_UNIDADES_PIEZAS: prod='{prod}', qty={qty}")
                 items.append((prod, qty, "u"))
             continue
 
-        print(f"No match para segmento: '{seg}'")  # 🔹 Debug
+        print(f"No match para segmento: '{seg}'")
 
-    print(f"Items extraídos: {items}")  # 🔹 Debug final
+    print(f"Items extraídos: {items}")
     return items
