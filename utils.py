@@ -399,12 +399,12 @@ def process_message(data):
 
             # utils.py (ejemplo de flujo de añadir productos al carrito)
             if session["paso"] == 3:
+                # 🔹 Añadir productos
                 encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)  # [(prod, cantidad, unidad), ...]
 
                 if encontrados:
                     añadidos = []
                     for prod, cantidad, unidad in encontrados:
-                        # 🔹 Defensa extra: si prod es list/tuple → convertir a string legible
                         if isinstance(prod, (list, tuple)):
                             prod = " ".join(str(x) for x in prod)
 
@@ -426,19 +426,66 @@ def process_message(data):
                     if añadidos:
                         return f"{', '.join(añadidos)} añadido(s).\nCarrito actual:\n{mostrar_carrito(session)}"
 
-                # >>> Manejar eliminar productos
-                if re.match(r"^(eliminar|elimina|quita|borra)\b", msg):
-                    producto = re.sub(r"^(eliminar|elimina|quita|borra)\s+", "", msg).strip()
-                    prod_real = _canonicalizar_producto(producto, PRODUCTOS_DB)
+                # 🔹 Eliminar productos
+                if re.match(r"^(eliminar|elimina|quita|borra)\b", msg, re.I):
+                    # Quitar palabra de acción
+                    texto_a_eliminar = re.sub(r"^(eliminar|elimina|quita|borra)\s+", "", msg, flags=re.I).strip()
+                    if not texto_a_eliminar:
+                        return "Indica qué producto(s) quieres eliminar."
 
-                    if isinstance(prod_real, str) and prod_real in session["carrito"]:
-                        session["carrito"].pop(prod_real)
-                        return f"{prod_real} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
+                    # Extraer productos y cantidades
+                    productos_a_eliminar = extraer_productos_desde_texto(texto_a_eliminar, PRODUCTOS_DB)
+                    if not productos_a_eliminar:
+                        return f"No encontré productos en '{texto_a_eliminar}'."
+
+                    eliminados = []
+                    no_encontrados = []
+
+                    for prod, cantidad, unidad in productos_a_eliminar:
+                        if isinstance(prod, (list, tuple)):
+                            prod = " ".join(str(x) for x in prod)
+
+                        prod_real = _canonicalizar_producto(prod, PRODUCTOS_DB)
+                        if isinstance(prod_real, list):
+                            prod_real = prod_real[0] if prod_real else prod
+
+                        if isinstance(prod_real, str):
+                            if prod_real in session["carrito"]:
+                                # 🔹 Restar cantidad si existe
+                                current_qty, current_unit = session["carrito"][prod_real]
+                                if current_unit != unidad:
+                                    # Unidades distintas, eliminamos todo
+                                    session["carrito"].pop(prod_real)
+                                    eliminados.append(f"{prod_real} (todo)")
+                                else:
+                                    if cantidad >= current_qty:
+                                        # Eliminar todo
+                                        session["carrito"].pop(prod_real)
+                                        eliminados.append(f"{prod_real} (todo)")
+                                    else:
+                                        # Restar cantidad
+                                        session["carrito"][prod_real] = (current_qty - cantidad, unidad)
+                                        eliminados.append(f"{prod_real} ({cantidad}{unidad})")
+                            else:
+                                no_encontrados.append(prod_real)
+                        else:
+                            no_encontrados.append(prod)
+
+                    mensaje = ""
+                    if eliminados:
+                        mensaje += f"{', '.join(eliminados)} eliminado(s) del carrito.\n"
+                    if no_encontrados:
+                        mensaje += f"No tenías {', '.join(no_encontrados)} en tu carrito."
+
+                    if not mensaje:
+                        mensaje = "No se eliminó ningún producto."
                     else:
-                        return f"No tienes {producto} en tu carrito."
+                        mensaje += f"\nCarrito actual:\n{mostrar_carrito(session)}"
 
-                # >>> Manejar "listo"
-                if msg == "listo":
+                    return mensaje
+
+                # 🔹 Manejar "listo"
+                if msg.lower() == "listo":
                     if not session["carrito"]:
                         return "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
                     session["paso"] = 4
@@ -448,6 +495,7 @@ def process_message(data):
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
                 return "Formato no válido. Ejemplo: '2 kilos de pollo' o '2 hamburguesas'."
+
 
 
 
