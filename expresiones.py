@@ -250,21 +250,49 @@ def _preprocesar(texto: str) -> list[str]:
     palabras = [w for w in texto.split() if w not in STOPWORDS]
     return palabras
 
-def _normalize(text: str) -> str:
-    """Convierte texto a minúsculas, sin acentos, plurales ni caracteres raros."""
+# ----------------------------
+# expresiones.py (o donde esté _normalize)
+# ----------------------------
+
+def _normalize(text) -> str:
+    """
+    Normaliza cualquier entrada a un string seguro:
+    - acepta str, bytes, list, tuple, int, etc.
+    - lower, strip, elimina acentos y caracteres no alfanuméricos,
+      colapsa espacios.
+    """
+    if text is None:
+        return ""
+
+    # bytes -> str
+    if isinstance(text, (bytes, bytearray)):
+        try:
+            text = text.decode("utf-8")
+        except Exception:
+            text = str(text)
+
+    # list/tuple -> intentar juntar elementos
+    if isinstance(text, (list, tuple)):
+        # si todos son str, juntamos por espacio
+        if all(isinstance(x, str) for x in text):
+            text = " ".join(text)
+        else:
+            # fallback: str() de cada elemento
+            text = " ".join(str(x) for x in text)
+
+    # cualquier otro tipo -> str()
+    if not isinstance(text, str):
+        text = str(text)
+
+    # ahora sí operaciones de normalización sobre string
     text = text.lower().strip()
-    text = unidecode(text)
-    text = re.sub(r"[^a-z0-9\s]", " ", text)   # solo letras/números/espacios
-    text = re.sub(r"\s+", " ", text)           # colapsa espacios múltiples
-    palabras = []
-    for w in text.split():
-        if w in STOPWORDS:
-            continue
-        # quita plural simple
-        if w.endswith("s") and len(w) > 3:
-            w = w[:-1]
-        palabras.append(w)
-    return " ".join(palabras)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    # dejar solo a-z y 0-9 y espacios
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
 
 # --- Inicialización ---
 # 1. Índice normalizado
@@ -333,19 +361,36 @@ def buscar_producto_conversacional(pedido: str, catalogo=None) -> str:
 # --- Función canonicalizar producto
 
 # extensiones.py
-from rapidfuzz import process
+# ----------------------------
+# extensiones.py: _canonicalizar_producto (robusta)
+# ----------------------------
 
-def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 85) -> str | list[str] | None:
+def _canonicalizar_producto(prod_raw, productos_db, fuzzy_threshold: int = 85) -> str | list[str] | None:
     """
     Devuelve:
-    - String: producto más probable (exacto o sinónimo o fuzzy claro)
-    - Lista de strings: sugerencias si hay ambigüedad
-    - None: si no hay coincidencias
+      - str: producto claro (exacto / sinónimo / fuzzy claro)
+      - list[str]: sugerencias si hay ambigüedad
+      - None: si no hay coincidencias
+    Funciona aunque prod_raw sea list/tuple/u otros tipos.
     """
     if not prod_raw:
         return None
 
-    prod_norm = _normalize(prod_raw)
+    # Si nos pasan una tupla/lista (p. ej. extraer_productos devuelve algo raro),
+    # intentamos sacar el nombre del producto:
+    if isinstance(prod_raw, (list, tuple)):
+        # forma común: prod_raw = ['pollo', 'relleno'] -> "pollo relleno"
+        # o prod_raw = ('pollo relleno', 2, 'kg') -> usar el primer elemento si es str
+        if len(prod_raw) >= 1 and isinstance(prod_raw[0], str) and len(prod_raw) > 1:
+            # si parece (nombre, cantidad, unidad) escogemos el primer elemento como nombre
+            prod_name_candidate = prod_raw[0]
+        else:
+            # en cualquier otro caso, juntamos todos los elementos como string
+            prod_name_candidate = " ".join(str(x) for x in prod_raw)
+    else:
+        prod_name_candidate = prod_raw
+
+    prod_norm = _normalize(prod_name_candidate)
 
     # 1) Exact match
     exact_matches = [p for p in productos_db if _normalize(p) == prod_norm]
@@ -356,23 +401,26 @@ def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 
     if prod_norm in SYNONYMS:
         return SYNONYMS[prod_norm]
 
-    # 3) Coincidencia por keywords
+    # 3) Coincidencia por keywords (todas deben estar presentes)
     palabras = set(prod_norm.split())
-    candidatos = [p for p in productos_db if all(w in _normalize(p) for w in palabras)]
+    candidatos = [p for p in productos_db if palabras and all(w in _normalize(p) for w in palabras)]
     if candidatos:
         if len(candidatos) == 1:
             return candidatos[0]  # certeza
         else:
-            return candidatos      # ambigüedad
+            # Ambigüedad -> devolvemos la lista tal cual (sin priorizar por longitud)
+            return candidatos
 
-    # 4) Fuzzy matching
+    # 4) Fuzzy matching (fallback)
     if productos_db:
-        best_match, score, _ = process.extractOne(prod_raw, productos_db)
-        if score >= fuzzy_threshold:
-            return best_match
+        maybe = process.extractOne(prod_name_candidate, productos_db)
+        if maybe:
+            best_match, score, _ = maybe
+            if score >= fuzzy_threshold:
+                return best_match
 
-        # Sugerencias top 3 si no alcanza el umbral
-        sugerencias = [p for p, s, _ in process.extract(prod_raw, productos_db, limit=3) if s >= 60]
+        # Si no hay match claro, devolver top-N sugerencias con score decente
+        sugerencias = [p for p, s, _ in process.extract(prod_name_candidate, productos_db, limit=3) if s >= 60]
         if sugerencias:
             return sugerencias
 

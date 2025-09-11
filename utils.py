@@ -404,6 +404,10 @@ def process_message(data):
                 if encontrados:
                     añadidos = []
                     for prod, cantidad, unidad in encontrados:
+                        # 🔹 Defensa extra: si prod es list/tuple → convertir a string legible
+                        if isinstance(prod, (list, tuple)):
+                            prod = " ".join(str(x) for x in prod)
+
                         prod_real = _canonicalizar_producto(prod, PRODUCTOS_DB)
 
                         if isinstance(prod_real, str):
