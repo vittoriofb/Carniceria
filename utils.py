@@ -7,7 +7,7 @@ from printer import send_to_printer
 from data import PRODUCTOS_DB
 
 # >>> NUEVO: utilidades de expresiones (no cambian la lógica, solo amplían la comprensión)
-from expresiones import normalizar_fecha_texto, extraer_productos_desde_texto, _buscar_producto_fuzzy
+from expresiones import normalizar_fecha_texto, extraer_productos_desde_texto, _buscar_producto_fuzzy, _canonicalizar_producto
 # <<<
 
 SESSIONS = {}
@@ -397,36 +397,43 @@ def process_message(data):
                             "• mañana a las 12:30\n"
                             "• este viernes por la tarde\n")
 
-            # Ejemplo de manejo del paso 3: añadir/eliminar productos
+            # utils.py (ejemplo de flujo de añadir productos al carrito)
             if session["paso"] == 3:
+                encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)  # [(prod, cantidad, unidad), ...]
 
-               # >>> Detectar múltiples productos en un solo mensaje
-                encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)  # ahora devuelve (prod, cantidad, unidad)
                 if encontrados:
                     añadidos = []
                     for prod, cantidad, unidad in encontrados:
-                        prod_real = _buscar_producto_fuzzy(prod)
-                        if not prod_real:
-                            continue
+                        prod_real = _canonicalizar_producto(prod, PRODUCTOS_DB)
 
-                        # Respetamos lo que dijo el cliente: ni tocamos cantidades ni forzamos unidades
-                        agregar_item_carrito(session, prod_real, cantidad, unidad)
-                        añadidos.append(formatear_item_simple(prod_real, cantidad, unidad))
+                        if isinstance(prod_real, str):
+                            # Coincidencia clara → añadir al carrito
+                            agregar_item_carrito(session, prod_real, cantidad, unidad)
+                            añadidos.append(formatear_item_simple(prod_real, cantidad, unidad))
+
+                        elif isinstance(prod_real, list):
+                            # Ambigüedad → mostrar sugerencias al cliente
+                            return f"No estoy seguro sobre '{prod}'. ¿Te refieres a alguno de estos?: {', '.join(prod_real)}"
+
+                        else:
+                            # Nada encontrado
+                            return f"No encontré nada parecido a '{prod}'."
 
                     if añadidos:
                         return f"{', '.join(añadidos)} añadido(s).\nCarrito actual:\n{mostrar_carrito(session)}"
 
-                # >>> Manejar eliminar productos (igual que antes)
+                # >>> Manejar eliminar productos
                 if re.match(r"^(eliminar|elimina|quita|borra)\b", msg):
-                        producto = re.sub(r"^(eliminar|elimina|quita|borra)\s+", "", msg).strip()
-                        prod_real = _buscar_producto_fuzzy(producto)
-                        if prod_real and prod_real in session["carrito"]:
-                            session["carrito"].pop(prod_real)
-                            return f"{prod_real} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
-                        else:
-                            return f"No tienes {producto} en tu carrito."
+                    producto = re.sub(r"^(eliminar|elimina|quita|borra)\s+", "", msg).strip()
+                    prod_real = _canonicalizar_producto(producto, PRODUCTOS_DB)
 
-                # >>> Manejar "listo" (igual)
+                    if isinstance(prod_real, str) and prod_real in session["carrito"]:
+                        session["carrito"].pop(prod_real)
+                        return f"{prod_real} eliminado del carrito.\nCarrito actual:\n{mostrar_carrito(session)}"
+                    else:
+                        return f"No tienes {producto} en tu carrito."
+
+                # >>> Manejar "listo"
                 if msg == "listo":
                     if not session["carrito"]:
                         return "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
@@ -436,16 +443,8 @@ def process_message(data):
                             f"{carrito_formateado}\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
-                # >>> Producto único flexible
-                unico = extraer_productos_desde_texto(msg, PRODUCTOS_DB)
-                if len(unico) == 1:
-                    prod, cantidad, unidad = unico[0]
-                    prod_real = _buscar_producto_fuzzy(prod)
-                    if prod_real:
-                        agregar_item_carrito(session, prod_real, cantidad, unidad)
-                        return f"{formatear_item_simple(prod_real, cantidad, unidad)} añadido.\nCarrito actual:\n{mostrar_carrito(session)}"
-
                 return "Formato no válido. Ejemplo: '2 kilos de pollo' o '2 hamburguesas'."
+
 
 
 

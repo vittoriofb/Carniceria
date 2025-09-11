@@ -332,34 +332,38 @@ def buscar_producto_conversacional(pedido: str, catalogo=None) -> str:
     return f"No he encontrado nada parecido a '{pedido}'."
 # --- Función canonicalizar producto
 
-def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 85) -> str | None:
+# extensiones.py
+from rapidfuzz import process
+
+def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 85) -> str | list[str] | None:
     """
     Devuelve:
-    - El producto más probable (match directo, sinónimo o fuzzy).
-    - None si no hay coincidencias.
+    - String: producto más probable (exacto o sinónimo o fuzzy claro)
+    - Lista de strings: sugerencias si hay ambigüedad
+    - None: si no hay coincidencias
     """
-
     if not prod_raw:
         return None
 
     prod_norm = _normalize(prod_raw)
 
-    # 1) Exact match directo
+    # 1) Exact match
     exact_matches = [p for p in productos_db if _normalize(p) == prod_norm]
     if exact_matches:
-        return exact_matches[0]  # Certeza total
+        return exact_matches[0]
 
     # 2) Sinónimos
     if prod_norm in SYNONYMS:
-        # Si hay varios sinónimos, tomamos el primero
-        synonym = SYNONYMS[prod_norm]
-        return synonym[0] if isinstance(synonym, list) else synonym
+        return SYNONYMS[prod_norm]
 
-    # 3) Coincidencia por palabras clave (todas deben estar presentes)
+    # 3) Coincidencia por keywords
     palabras = set(prod_norm.split())
     candidatos = [p for p in productos_db if all(w in _normalize(p) for w in palabras)]
     if candidatos:
-        return candidatos[0]  # Tomamos la primera coincidencia para evitar listas
+        if len(candidatos) == 1:
+            return candidatos[0]  # certeza
+        else:
+            return candidatos      # ambigüedad
 
     # 4) Fuzzy matching
     if productos_db:
@@ -367,13 +371,13 @@ def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 
         if score >= fuzzy_threshold:
             return best_match
 
-        # Tomamos la mejor sugerencia fuzzy aunque no alcance el umbral
+        # Sugerencias top 3 si no alcanza el umbral
         sugerencias = [p for p, s, _ in process.extract(prod_raw, productos_db, limit=3) if s >= 60]
         if sugerencias:
-            return sugerencias[0]  # Primera sugerencia
+            return sugerencias
 
-    # 5) Nada encontrado
-    return "Parece que no tenemos lo que pides, si quieres consultar el catálogo, escribe 'Ver catálogo'"
+    return None
+
 
 
 
