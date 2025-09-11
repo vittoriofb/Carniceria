@@ -281,11 +281,11 @@ SYNONYMS = {
     "pechuga pollo": "Filetes de pechuga entera",
     "chuletón de vaca": "Super chuletón de vaca gallega madurada (1kg aprox)",
     "chuleta de vaca": "Chuleta de ternera gallega",
-    "croquetas casera": "Surtido de croquetas caseras 12 unidades",
+    "croquetas casera" or "croquetas caseras": "Surtido de croquetas caseras 12 unidades",
     "croquetas pollo": "Croquetas de Pollo",
     "hamburguesa barbacoa": "Hamburguesa BBQ barbacoa",
-    "hamburguesa clasica pollo": "Hamburguesa clásica de polllo",
-    "hamburguesa clasica ternera": "Hamburguesa clásica de ternera",
+    "hamburguesa de pollo": "Hamburguesa clásica de polllo",
+    "hamburguesa de ternera": "Hamburguesa clásica de ternera",
     "cordero entero": "Cordero lechal entero",
     "cordero medio": "Cordero lechal medio",
     # puedes ir ampliando con lo que digan tus clientes
@@ -331,20 +331,25 @@ def buscar_producto_conversacional(pedido: str, catalogo=None) -> str:
 
     return f"No he encontrado nada parecido a '{pedido}'."
 # --- Función canonicalizar producto
-def _canonicalizar_producto(prod_raw: str, productos_db) -> str | list[str] | None:
+from rapidfuzz import process
+
+def _canonicalizar_producto(prod_raw: str, productos_db, fuzzy_threshold: int = 85) -> str | list[str] | None:
     """
     Devuelve:
-    - El producto más probable (match directo, sinónimos, keywords o fuzzy).
-    - Una lista de sugerencias si no hay certeza.
+    - El producto más probable (match directo o sinónimo).
+    - Una lista de sugerencias si hay ambigüedad.
+    - None si no hay coincidencias.
     """
+
     if not prod_raw:
         return None
 
     prod_norm = _normalize(prod_raw)
 
     # 1) Exact match directo
-    if prod_norm in [_normalize(p) for p in productos_db]:
-        return next(p for p in productos_db if _normalize(p) == prod_norm)
+    exact_matches = [p for p in productos_db if _normalize(p) == prod_norm]
+    if exact_matches:
+        return exact_matches[0]  # Certeza total
 
     # 2) Sinónimos
     if prod_norm in SYNONYMS:
@@ -352,17 +357,29 @@ def _canonicalizar_producto(prod_raw: str, productos_db) -> str | list[str] | No
 
     # 3) Coincidencia por palabras clave (todas deben estar presentes)
     palabras = set(prod_norm.split())
-    candidatos = []
-    for p in productos_db:
-        p_norm = _normalize(p)
-        if all(w in p_norm for w in palabras):
-            candidatos.append(p)
+    candidatos = [p for p in productos_db if all(w in _normalize(p) for w in palabras)]
+
     if candidatos:
-        # prioriza el más largo (más descriptivo)
-        return sorted(candidatos, key=len, reverse=True)[0]
+        if len(candidatos) == 1:
+            return candidatos[0]  # Certeza
+        else:
+            # Ambigüedad: devolvemos todas las opciones posibles
+            return candidatos
 
     # 4) Fuzzy matching
-    return _buscar_producto_fuzzy(prod_raw, productos_db)
+    if productos_db:
+        best_match, score, _ = process.extractOne(prod_raw, productos_db)
+        if score >= fuzzy_threshold:
+            return best_match
+
+        # Si no alcanza el umbral, podemos devolver top 3 sugerencias
+        sugerencias = [p for p, s, _ in process.extract(prod_raw, productos_db, limit=3) if s >= 60]
+        if sugerencias:
+            return sugerencias
+
+    # 5) Nada encontrado
+    return None
+
 
 
 def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float, str]]:

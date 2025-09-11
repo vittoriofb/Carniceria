@@ -342,6 +342,7 @@ def process_message(data):
                     return f"Has vuelto atrás ↩️. Lista actual:\n{mostrar_carrito(session)}\nDime si quieres añadir o quitar algo."
             else:
                 return "No puedes retroceder más, estamos al inicio del pedido."
+            
 
         # --- INICIAR PEDIDO ---
         if "iniciar pedido" in msg:
