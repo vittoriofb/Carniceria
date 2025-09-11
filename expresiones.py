@@ -185,30 +185,34 @@ _SEP = re.compile(r"\s*(?:,|;|\+|/|y|e)\s*", re.I)
 _PAT_QTY_DE_PROD = re.compile(
     r"(?P<qty>(?:\d+(?:[.,]\d+)?|(?:1/2|1/4|3/4)|medio|media|cuarto|tres\s+cuartos))\s*"
     r"(?P<unit>kg|kilos?|kgs?|g|grs?|gramos?)?\s*(?:de\s+)?"
-    r"(?P<prod>[a-záéíóúñü\s\-]+)$",
+    r"(?P<prod>[a-záéíóúñü\s\-]+)$",   # 👈 producto completo
     re.I
 )
+
+# Producto + cantidad [+ unidad]
 _PAT_PROD_QTY = re.compile(
-    r"(?P<prod>[a-záéíóúñü\s\-]+?)\s*"
+    r"(?P<prod>[a-záéíóúñü\s\-]+)\s*"  # 👈 sin lazy, acepta nombre completo
     r"(?P<qty>(?:\d+(?:[.,]\d+)?|(?:1/2|1/4|3/4)|medio|media|cuarto|tres\s+cuartos))\s*"
     r"(?P<unit>kg|kilos?|kgs?|g|grs?|gramos?)?$",
     re.I
 )
 
-# Nuevo: detectar unidades tipo "2 hamburguesas", "1 paella"
+# Unidades/piezas (ej: "2 hamburguesas", "1 paella", "3 croquetas de pollo")
 _PAT_UNIDADES_PIEZAS = re.compile(
     r"(?P<num>\d+|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
-    r"(?P<prod>[a-záéíóúñü\s\-]+?)(?:s)?$", re.I
+    r"(?P<prod>[a-záéíóúñü\s\-]+s?)$",   # 👈 plural dentro del grupo
+    re.I
 )
 
-
+# Cantidad en texto + [unidad] + de + producto
 _PAT_NUM_TXT = re.compile(
     r"(?P<num>(?:un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|"
     r"once|doce|docena|trece|catorce|quince|veinte|medio|media|cuarto|tres\s+cuartos))\s*"
     r"(?P<unit>kg|kilos?|kgs?|g|grs?|gramos?)?\s*(?:de\s+)?"
-    r"(?P<prod>[a-záéíóúñü\s\-]+)$",
+    r"(?P<prod>[a-záéíóúñü\s\-]+)$",   # 👈 producto completo
     re.I
 )
+
 
 def _parse_qty(qty_raw: str, unit_raw: str | None) -> float:
     q = qty_raw.strip().lower()
@@ -436,6 +440,7 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, f
     - Si NO se menciona 'kg'/'g', se asume unidades ("u").
     - IMPORTANTE: Aquí NO canonicalizamos el producto, eso se hace luego en utils.py
     """
+    
     if not texto:
         return []
 
