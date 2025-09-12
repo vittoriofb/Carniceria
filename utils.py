@@ -336,8 +336,8 @@ def process_message(data):
                 elif session["paso"] == 3:
                     session.pop("hora", None)
                     session["paso"] = 2
-                    return ("Has vuelto atrás ↩️. Por favor, indícanos *día y hora*.\n"
-                            "Ejemplos: 'martes 15:00', '13/08 15:00', 'mañana 12:30', 'este viernes a las 14', 'el 20 por la tarde', 'pasado mañana 10:00'.")
+                    return ("Has vuelto atrás ↩️. Por favor, indícanos el *día* y la *hora*.\n"
+                            "Ejemplos: 'martes a las 15:00', '13/08 15:00', 'mañana a las 12:30', 'este viernes a las 14', 'el 20 por la tarde', 'pasado mañana 10:00'.")
                 elif session["paso"] == 4:
                     session["paso"] = 3
                     return f"Has vuelto atrás ↩️. Lista actual:\n{mostrar_carrito(session)}\nDime si quieres añadir o quitar algo."
@@ -559,7 +559,7 @@ def process_message(data):
                     return "\n".join(partes_del)
 
                 # >>> Manejar "listo"
-                if msg == "listo":
+                if msg == "listo" or "si" "ya esta" or "confirmar" or "ya está" or "ya":
                     if not session["carrito"]:
                         return "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
                     session["paso"] = 4
@@ -568,7 +568,7 @@ def process_message(data):
                             f"{carrito_formateado}\n"
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
-                return "Formato no válido. Ejemplo: '2 kilos de pollo' o '2 hamburguesas'."
+                return "Formato no válido, indica una cantidad. Ejemplo: '2 kilos de pollo entero' o '2 hamburguesas de pollo'."
 
 
 

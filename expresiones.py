@@ -320,6 +320,7 @@ SYNONYMS = {
     "hamburguesa de ternera": "Hamburguesa clásica de ternera",
     "cordero entero": "Cordero lechal entero",
     "cordero medio": "Cordero lechal medio",
+    "muslitos de pollo": "Muslitos de pollo rellenos sin cocinar",
     # puedes ir ampliando con lo que digan tus clientes
 }
 
@@ -359,7 +360,8 @@ def buscar_producto_conversacional(pedido: str, catalogo=None) -> str:
     # Si no hay match, proponemos sugerencias
     sugerencias = [x[0] for x in process.extract(pedido, catalogo or PRODUCTOS_DB, limit=3)]
     if sugerencias:
-        return f"No encontré '{pedido}'. ¿Quizás quisiste decir: {', '.join(sugerencias)}?"
+        sugerencias_formateadas = "\n".join(f"· {s}" for s in sugerencias)
+        return f"No encontré '{pedido}'. ¿Quizás quisiste decir:\n{sugerencias_formateadas}\n?"
 
     return f"No he encontrado nada parecido a '{pedido}'."
 # --- Función canonicalizar producto
