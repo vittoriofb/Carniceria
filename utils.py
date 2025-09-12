@@ -2,6 +2,7 @@
 import logging
 import re
 from datetime import datetime, timedelta
+from rapidfuzz import process
 
 from printer import send_to_printer
 from data import PRODUCTOS_DB

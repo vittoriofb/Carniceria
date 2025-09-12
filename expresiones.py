@@ -239,7 +239,7 @@ def _parse_qty(qty_raw: str, unit_raw: str | None) -> float:
     # si no hay unidad o es kg, ya está en kg
     return round(qty, 3)
 
-STOPWORDS = {"de", "y", "con", "el", "la", "los", "las", "un", "una", "unos", "unas"}
+STOPWORDS = {"de", "y", "con", "el", "la", "los", "las", "un", "una", "unos", "unas", "\n"}
 
 def _strip_accents(text: str) -> str:
     return unidecode(text)
