@@ -369,30 +369,36 @@ def buscar_producto_conversacional(pedido: str, catalogo=None) -> str:
 # extensiones.py: _canonicalizar_producto (robusta)
 # ----------------------------
 
-# --- canonicalizar producto ---
+# --- _canonicalizar_producto (sin cambios lógicos, robusta) ---
 def _canonicalizar_producto(prod_raw, productos_db, fuzzy_threshold: int = 85) -> str | list[str] | None:
     """
     Canonicaliza uno o varios productos en la misma frase.
-    - Si prod_raw es str con separadores: devuelve lista de productos canonizados.
-    - Si prod_raw es lista/tuple: intenta canonicalizar cada elemento.
-    - Devuelve:
-        - str: coincidencia clara
-        - list[str]: ambigüedad o sugerencias
-        - None: nada encontrado
+    Devuelve:
+      - str: coincidencia clara
+      - list[str]: ambigüedad / sugerencias
+      - None: nada encontrado
+    Si prod_raw es una lista/tuple, intenta canonicalizar cada elemento.
+    Si prod_raw es un str con separadores devuelve lista de resultados (o un único resultado si sólo había uno).
     """
     if not prod_raw:
         return None
 
-    # Convertir str con separadores a lista
+    # Si nos pasan repetidos/colección -> canonicalizar cada uno recursivamente
+    if isinstance(prod_raw, (list, tuple)):
+        resultados = [ _canonicalizar_producto(x, productos_db, fuzzy_threshold) for x in prod_raw ]
+        # mantener la estructura: devolver lista si hay varios elementos
+        return resultados if len(resultados) > 1 else resultados[0]
+
+    # Si es str, podemos tener varios items separados en la misma cadena -> partirlos
     if isinstance(prod_raw, str):
-        segmentos = [s.strip() for s in re.split(r"\s*(?:,|y|;|/|\n)\s*", prod_raw) if s.strip()]
-    elif isinstance(prod_raw, (list, tuple)):
-        segmentos = list(prod_raw)
+        segmentos = [s.strip() for s in re.split(r"\s*(?:,|;|/|\n)\s*", prod_raw) if s.strip()]
     else:
         segmentos = [str(prod_raw)]
 
-    resultados = []
+    # normalizar mapa de sinónimos para lookup por clave normalizada
+    syn_map = { _normalize(k): v for k, v in SYNONYMS.items() }
 
+    resultados = []
     for seg in segmentos:
         seg_norm = _normalize(seg)
 
@@ -402,22 +408,22 @@ def _canonicalizar_producto(prod_raw, productos_db, fuzzy_threshold: int = 85) -
             resultados.append(exact_matches[0])
             continue
 
-        # 2) Sinónimos
-        if seg_norm in SYNONYMS:
-            resultados.append(SYNONYMS[seg_norm])
+        # 2) Sinónimos (buscamos en el mapa normalizado)
+        if seg_norm in syn_map:
+            resultados.append(syn_map[seg_norm])
             continue
 
-        # 3) Coincidencia por keywords (todas deben estar presentes)
+        # 3) Coincidencia por keywords (todas las palabras deben aparecer)
         palabras = set(seg_norm.split())
         candidatos = [p for p in productos_db if palabras and all(w in _normalize(p) for w in palabras)]
         if candidatos:
             if len(candidatos) == 1:
                 resultados.append(candidatos[0])
             else:
-                resultados.append(candidatos)  # Ambigüedad
+                resultados.append(candidatos)  # ambigüedad (lista)
             continue
 
-        # 4) Fuzzy
+        # 4) Fuzzy (fallback)
         maybe = process.extractOne(seg, productos_db)
         if maybe:
             best_match, score, _ = maybe
@@ -425,43 +431,50 @@ def _canonicalizar_producto(prod_raw, productos_db, fuzzy_threshold: int = 85) -
                 resultados.append(best_match)
                 continue
 
-        # 5) Sugerencias Top-N
+        # 5) Top-N sugerencias (si ninguna supera el threshold)
         sugerencias = [p for p, s, _ in process.extract(seg, productos_db, limit=3) if s >= 60]
         if sugerencias:
             resultados.append(sugerencias)
         else:
             resultados.append(None)
 
-    # Si solo hay un elemento, devolver directamente
+    # Si sólo había un segmento, devolver directamente su resultado
     if len(resultados) == 1:
         return resultados[0]
     return resultados
 
 
-# --- extraer productos desde texto ---
-def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str | list[str] | None, float, str]]:
+
+
+
+# --- extraer_productos_desde_texto (DEVUELVE el producto CRUDO, no canonicaliza) ---
+def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str, float, str]]:
     """
-    Extrae [(producto_canonizado, cantidad, unidad), ...] desde un mensaje libre.
+    Extrae [(producto_crudo, cantidad, unidad), ...] desde un mensaje libre.
     - unidad: "kg" si el cliente dijo kg/g (se convierte a kg), "u" si habló de piezas.
-    - Soporta varios productos en la misma frase, separados por ',', ';', '+', '/', '\n' o 'y'.
-    - Mantiene las listas de sugerencias para el flujo principal.
+    - Soporta varios productos en la misma frase separados por ',', ';', '+', '/', 'y' o '\n'.
+    - IMPORTANTE: aquí NO canonicalizamos el producto — devolvemos la cadena tal cual;
+      la canonicalización la hará el flujo principal (utils) para decidir añadir/sugerir.
     """
     if not texto:
         return []
 
     raw = texto.strip().lower()
+    print(f"Texto original: '{raw}'")
 
-    # Quitar fillers iniciales
+    # 0) Quitar fillers al INICIO (repetidos)
     while True:
         nuevo = _FILLER_INICIO.sub("", raw).strip()
         if nuevo == raw:
             break
         raw = nuevo
+    print(f"Después de quitar fillers: '{raw}'")
 
-    # Limpiar posible ruido numérico al final
+    # 0.1) Limpiar posible ruido numérico al final
     raw = re.sub(r"\s+\d{3,}\b$", "", raw)
+    print(f"Después de quitar números largos al final: '{raw}'")
 
-    # Normalizar cantidades
+    # 1) Normalización de cantidades coloquiales
     reemplazos_qty = [
         (r"\bmedio\s+kilo\b", "0.5 kg"),
         (r"\b(kilo|kg)\s+y\s+medio\b", "1.5 kg"),
@@ -474,11 +487,13 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str | 
     ]
     for pat, rep in reemplazos_qty:
         raw = re.sub(pat, rep, raw)
+    print(f"Después de normalizar cantidades: '{raw}'")
 
-    # Trocear segmentos
+    # 2) Trocear en segmentos por separadores (incluimos 'y' como separador)
     segmentos = [s.strip() for s in re.split(r"\s*(?:,|;|\+|/|y|\n)\s*", raw) if s.strip()]
+    print(f"Segmentos detectados: {segmentos}")
 
-    items = []
+    items: list[tuple[str, float, str]] = []
 
     _KG_TOKENS = {"kg", "kilo", "kilos", "kgs"}
     _G_TOKENS  = {"g", "gr", "grs", "gramo", "gramos"}
@@ -494,45 +509,87 @@ def extraer_productos_desde_texto(texto: str, productos_db) -> list[tuple[str | 
             return 0.0
 
     for seg in segmentos:
+        print(f"Procesando segmento: '{seg}'")
         seg = _FILLER_INICIO.sub("", seg).strip()
         if not seg:
             continue
 
-        # Intentar varias regex
-        m = _PAT_QTY_DE_PROD.match(seg) or _PAT_PROD_QTY.match(seg) or _PAT_NUM_TXT.match(seg) or _PAT_UNIDADES_PIEZAS.match(seg)
-
+        # 1) qty + [unit] + (de) + prod  (ej: "2 kg de pollo", "2 croquetas de pollo")
+        m = _PAT_QTY_DE_PROD.match(seg)
         if m:
-            qty_raw = m.groupdict().get("qty") or m.groupdict().get("num") or "1"
-            unit_raw = (m.groupdict().get("unit") or "").lower()
-            prod_raw = m.groupdict().get("prod")
+            qty_raw = m.group("qty")
+            unit_raw = (m.group("unit") or "").lower()
+            prod = m.group("prod").strip()   # <-- devolvemos PRODUCTO CRUDO
+            print(f"Matched _PAT_QTY_DE_PROD: prod='{prod}', qty='{qty_raw}', unit='{unit_raw}'")
             if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
                 qty = _parse_qty(qty_raw, unit_raw)
                 unit = "kg"
             else:
                 qty = _to_units_number(qty_raw)
                 unit = "u"
-
-            # canonicalizar pero NO colapsar listas
-            prod_canon = _canonicalizar_producto(prod_raw, productos_db)
-
-            if prod_canon and qty > 0:
-                items.append((prod_canon, qty, unit))
+            if prod and qty > 0:
+                items.append((prod, qty, unit))
             continue
 
-        # "producto medio"
+        # 2) prod + qty [+ unit] (ej: "pollo 2", "jamón 3")
+        m = _PAT_PROD_QTY.match(seg)
+        if m:
+            qty_raw = m.group("qty")
+            unit_raw = (m.group("unit") or "").lower()
+            prod = m.group("prod").strip()
+            print(f"Matched _PAT_PROD_QTY: prod='{prod}', qty='{qty_raw}', unit='{unit_raw}'")
+            if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
+                qty = _parse_qty(qty_raw, unit_raw)
+                unit = "kg"
+            else:
+                qty = _to_units_number(qty_raw)
+                unit = "u"
+            if prod and qty > 0:
+                items.append((prod, qty, unit))
+            continue
+
+        # 3) num_txt + [unit] + de + prod (ej: "dos kg de chorizo")
+        m = _PAT_NUM_TXT.match(seg)
+        if m:
+            num_raw = m.group("num")
+            unit_raw = (m.group("unit") or "").lower()
+            prod = m.group("prod").strip()
+            print(f"Matched _PAT_NUM_TXT: prod='{prod}', num='{num_raw}', unit='{unit_raw}'")
+            if unit_raw in _KG_TOKENS or unit_raw in _G_TOKENS:
+                qty = _parse_qty(num_raw, unit_raw)
+                unit = "kg"
+            else:
+                qty = _to_units_number(num_raw)
+                unit = "u"
+            if prod and qty > 0:
+                items.append((prod, qty, unit))
+            continue
+
+        # 4) "producto medio" -> asumimos kg
         m = re.match(
             r"(?P<prod>[a-záéíóúñü\s\-]+)\s+(?P<num>medio|media|1/2|cuarto|1/4|tres\s+cuartos|3/4)$",
             seg, re.I
         )
         if m:
             qty = _parse_qty(m.group("num"), "kg")
-            prod_raw = m.group("prod")
-            prod_canon = _canonicalizar_producto(prod_raw, productos_db)
-            if prod_canon and qty > 0:
-                items.append((prod_canon, qty, "kg"))
+            prod = m.group("prod").strip()
+            print(f"Matched 'producto medio': prod='{prod}', qty={qty}")
+            if prod and qty > 0:
+                items.append((prod, qty, "kg"))
             continue
 
-        # Si no matchea nada, dejamos como None con qty=1
-        items.append((None, 1.0, "u"))
+        # 5) Unidades/piezas: "2 hamburguesas", "1 paella", "dos filetes"
+        m = _PAT_UNIDADES_PIEZAS.match(seg)
+        if m:
+            num_raw = m.group("num").lower()
+            qty = float(_NUM_TXT.get(num_raw, num_raw)) if num_raw in _NUM_TXT else float(num_raw)
+            prod = m.group("prod").strip()
+            print(f"Matched _PAT_UNIDADES_PIEZAS: prod='{prod}', qty={qty}")
+            if prod and qty > 0:
+                items.append((prod, qty, "u"))
+            continue
 
+        print(f"No match para segmento: '{seg}'")
+
+    print(f"Items extraídos: {items}")
     return items
