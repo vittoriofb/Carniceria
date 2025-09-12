@@ -454,20 +454,31 @@ def process_message(data):
 
                 # Construir respuesta compuesta si hubo actividad de añadir
                 partes = []
+
                 if añadidos:
                     partes.append(f"{', '.join(añadidos)} añadido(s).\nCarrito actual:\n{mostrar_carrito(session)}")
 
+                # Ambigüedades
                 for prod_crudo, opciones in ambiguos:
-                    partes.append(f"No estoy seguro sobre '{prod_crudo}'. ¿Te refieres a alguno de estos?: {', '.join(opciones)}")
+                    opciones_unicas = list(dict.fromkeys(opciones))  # elimina duplicados
+                    if opciones_unicas and not all(o.lower() == "otros" for o in opciones_unicas):
+                        sugerencias_formateadas = "\n".join(f"· {s}" for s in opciones_unicas)
+                        partes.append(f"No estoy seguro sobre '{prod_crudo}'. ¿Te refieres a alguno de estos?:\n{sugerencias_formateadas}")
+                    else:
+                        partes.append(f"No he encontrado nada parecido a '{prod_crudo}'.")
 
+                # Productos no encontrados
                 for prod_crudo, sugest in no_encontrados:
-                    if sugest:
-                        partes.append(f"No encontré '{prod_crudo}'. ¿Quizás quisiste decir: {', '.join(sugest)}?")
+                    sugest_unicas = list(dict.fromkeys(sugest or []))  # eliminar duplicados
+                    if sugest_unicas and not all(s.lower() == "otros" for s in sugest_unicas):
+                        sugerencias_formateadas = "\n".join(f"· {s}" for s in sugest_unicas)
+                        partes.append(f"No encontré en el catálogo '{prod_crudo}'. ¿Quizás quisiste decir:\n{sugerencias_formateadas}\n?")
                     else:
                         partes.append(f"No he encontrado nada parecido a '{prod_crudo}'.")
 
                 if partes:
                     return "\n".join(partes)
+
 
                 # >>> Manejar eliminar productos (soporta varios items en la misma frase)
                 if re.match(r"^(eliminar|elimina|quita|borra)\b", msg):
@@ -561,7 +572,7 @@ def process_message(data):
                 # >>> Manejar "listo"
                 if msg == "listo" or "si" "ya esta" or "confirmar" or "ya está" or "ya":
                     if not session["carrito"]:
-                        return "No has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
+                        return "No te he entendido o no has añadido ningún producto. Añade al menos uno antes de decir 'listo'."
                     session["paso"] = 4
                     carrito_formateado = mostrar_carrito(session)
                     return (f"Este es tu pedido para *{formatear_fecha(session['hora'])}*:\n"
