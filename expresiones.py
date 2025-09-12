@@ -303,7 +303,7 @@ def _normalize(text) -> str:
 INDEX_NORMALIZADO = { _normalize(k): k for k in PRODUCTOS_DB }
 
 SYNONYMS = {
-    "pollo para asar": "Pollo entero",
+    "pollos enteros": "Pollo entero",
     "pollo al horno": "Pollo entero",
     "alita de pollo": "Alas de pollo",
     "alita": "Alas de pollo",

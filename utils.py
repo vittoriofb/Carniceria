@@ -397,7 +397,7 @@ def process_message(data):
                             "• mañana a las 12:30\n"
                             "• este viernes por la tarde\n")
 
-            # utils.py (ejemplo de flujo de añadir productos al carrito)
+            # utils.py (ejemplo de flujo de añadir/eliminar productos al carrito)
             if session["paso"] == 3:
                 # 🔹 Extraer productos del mensaje
                 encontrados = extraer_productos_desde_texto(msg, PRODUCTOS_DB)  # [(prod_crudo, cantidad, unidad), ...]
@@ -409,10 +409,10 @@ def process_message(data):
 
                 if encontrados:
                     for prod, cantidad, unidad in encontrados:
-                        # Defensa extra: si prod es list/tuple → convertir a string legible
                         if isinstance(prod, (list, tuple)):
                             prod = " ".join(str(x) for x in prod)
 
+                        # 🔹 Canonicalización + normalización
                         prod_real = _canonicalizar_producto(prod, PRODUCTOS_DB)
 
                         # Caso 1: coincidencia clara
@@ -420,16 +420,13 @@ def process_message(data):
                             try:
                                 cantidad_num = float(cantidad)
                             except Exception:
-                                # fallback: si viene escrito en texto como "dos"
                                 cantidad_num = float(_NUM_TXT.get(str(cantidad).strip().lower(), 0))
 
-                            # Añadir al carrito y confirmar
                             agregar_item_carrito(session, prod_real, cantidad_num, unidad)
                             añadidos.append(formatear_item_simple(prod_real, cantidad_num, unidad))
 
                         # Caso 2: ambigüedad -> devolver opciones al final
                         elif isinstance(prod_real, list):
-                            # Aplanar/normalizar opciones (podría haber listas anidadas)
                             opciones = []
                             def _flatten(x):
                                 if x is None:
@@ -446,7 +443,6 @@ def process_message(data):
                             if opciones:
                                 ambiguos.append((prod, opciones))
                             else:
-                                # fallback: sugerencias fuzzy
                                 sugerencias = [x[0] for x in process.extract(prod, PRODUCTOS_DB, limit=3)]
                                 no_encontrados.append((prod, sugerencias))
 
@@ -474,17 +470,16 @@ def process_message(data):
 
                 # >>> Manejar eliminar productos (soporta varios items en la misma frase)
                 if re.match(r"^(eliminar|elimina|quita|borra)\b", msg):
-                    # Extraemos lo que sigue al verbo
                     texto_eliminar = re.sub(r"^(eliminar|elimina|quita|borra)\s+", "", msg).strip()
                     items_a_eliminar = extraer_productos_desde_texto(texto_eliminar, PRODUCTOS_DB)
 
                     if not items_a_eliminar:
-                        return f"No entendí qué producto quieres eliminar."
+                        return "No entendí qué producto quieres eliminar."
 
-                    eliminados_ok = []        # nombres que se han eliminado o reducido
-                    not_in_cart = []          # productos canonizados que no estaban en carrito
-                    ambiguos_elim = []        # [(prod_crudo, opciones_list), ...]
-                    no_encontrados_elim = []  # [(prod_crudo, sugerencias_list), ...]
+                    eliminados_ok = []        # productos eliminados
+                    not_in_cart = []          # productos que no estaban en carrito
+                    ambiguos_elim = []        # productos ambiguos
+                    no_encontrados_elim = []  # productos no encontrados
 
                     for prod, cantidad, unidad in items_a_eliminar:
                         if isinstance(prod, (list, tuple)):
@@ -492,7 +487,7 @@ def process_message(data):
 
                         prod_real = _canonicalizar_producto(prod, PRODUCTOS_DB)
 
-                        # Ambigüedad en canonicalización -> sugerir
+                        # Ambigüedad -> sugerir
                         if isinstance(prod_real, list):
                             opciones = []
                             def _flatten2(x):
@@ -510,38 +505,35 @@ def process_message(data):
                             ambiguos_elim.append((prod, opciones))
                             continue
 
-                        # No encontrado -> sugerencias fuzzy
+                        # No encontrado
                         if not prod_real:
                             sugerencias = [x[0] for x in process.extract(prod, PRODUCTOS_DB, limit=3)]
                             no_encontrados_elim.append((prod, sugerencias))
                             continue
 
-                        # prod_real es str (canonizado). Comprobamos en carrito
                         if prod_real not in session.get("carrito", {}):
                             not_in_cart.append(prod_real)
                             continue
 
-                        # parse cantidad seguro a float
                         try:
                             cantidad_num = float(cantidad)
                         except Exception:
-                            cantidad_num = 0.0
-                            if isinstance(cantidad, str):
-                                cantidad_num = float(_NUM_TXT.get(cantidad.strip().lower(), 0))
+                            cantidad_num = float(_NUM_TXT.get(str(cantidad).strip().lower(), 0))
 
-                        # obtener cantidad actual en carrito y unidad
                         current_qty, current_unit = session["carrito"][prod_real]
+
                         try:
                             current_qty = float(current_qty)
                         except Exception:
-                            current_qty = float(str(current_qty).replace(",", ".") if current_qty is not None else 0.0)
+                            try:
+                                current_qty = float(str(current_qty).replace(",", "."))
+                            except Exception:
+                                current_qty = 0.0
 
-                        # Si unidad distinta, eliminamos todo (simplificación)
                         if current_unit != unidad:
                             session["carrito"].pop(prod_real, None)
                             eliminados_ok.append(f"{prod_real} (todo)")
                         else:
-                            # Si piden >= cantidad actual -> quitar todo; si piden < -> restar
                             if cantidad_num <= 0 or cantidad_num >= current_qty:
                                 session["carrito"].pop(prod_real, None)
                                 eliminados_ok.append(f"{prod_real} (todo)")
@@ -550,7 +542,6 @@ def process_message(data):
                                 session["carrito"][prod_real] = (nueva, current_unit)
                                 eliminados_ok.append(f"{prod_real} ({cantidad_num}{current_unit})")
 
-                    # Construir mensaje de resultado de eliminación
                     partes_del = []
                     if eliminados_ok:
                         partes_del.append(f"{', '.join(eliminados_ok)} eliminado(s) del carrito.\nCarrito actual:\n{mostrar_carrito(session)}")
@@ -577,6 +568,7 @@ def process_message(data):
                             "Escribe 'confirmar' para finalizar o 'cancelar' para anular.")
 
                 return "Formato no válido. Ejemplo: '2 kilos de pollo' o '2 hamburguesas'."
+
 
 
 
